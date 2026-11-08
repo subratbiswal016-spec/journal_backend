@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 from pathlib import Path
 from typing import Any, Optional
 
-_DB_PATH = Path(__file__).resolve().parent.parent.parent / ".journal.db"
+# DB location is configurable so a hosted deploy can point it at a persistent
+# disk (e.g. JOURNAL_DB=/data/.journal.db). Defaults to the project root.
+_DB_PATH = Path(os.getenv("JOURNAL_DB") or
+                (Path(__file__).resolve().parent.parent.parent / ".journal.db"))
 _lock = threading.Lock()
 
 _SCHEMA = """
@@ -56,6 +60,7 @@ def _conn() -> sqlite3.Connection:
 
 
 def init() -> None:
+    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _lock, _conn() as c:
         c.executescript(_SCHEMA)
 

@@ -11,6 +11,3 @@ __pycache__/
 
 # Trade data (personal) — never publish
 .journal.db
-
-# Frontend lives in its own repo (journal_frontend)
-frontend/

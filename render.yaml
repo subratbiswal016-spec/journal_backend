@@ -1,0 +1,39 @@
+# Render Blueprint — one-click deploy.
+# Deploy: push this repo to GitHub, then open
+#   https://render.com/deploy?repo=https://github.com/subratbiswal016-spec/journal_backend
+# or on render.com: New → Blueprint → pick this repo.
+services:
+  - type: web
+    name: oi-journal
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      # Starts on mock data so the dashboard works immediately after deploy.
+      # Switch to "fyers" once you set the Fyers vars below + update the Fyers
+      # app's Redirect URL to https://YOUR-APP.onrender.com/auth/callback
+      - key: DATA_SOURCE
+        value: mock
+      # Protect the public URL — set a password in the Render dashboard.
+      - key: JOURNAL_PASSWORD
+        sync: false
+      # Fyers live data (fill in the Render dashboard when switching off mock).
+      - key: FYERS_APP_ID
+        sync: false
+      - key: FYERS_SECRET_ID
+        sync: false
+      - key: FYERS_REDIRECT_URI
+        sync: false
+    # Free plan note: the filesystem is ephemeral, so the journal DB resets on
+    # redeploy — but you can just re-sync from Fyers/Dhan. To keep data, add a
+    # persistent disk (paid) and point the DB at it by uncommenting BOTH the
+    # JOURNAL_DB env var above-style entry and this disk block:
+    #   envVars: - key: JOURNAL_DB
+    #              value: /data/.journal.db
+    # disk:
+    #   name: journal-data
+    #   mountPath: /data
+    #   sizeGB: 1

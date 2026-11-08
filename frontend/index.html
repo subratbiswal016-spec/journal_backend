@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Option OI Dashboard</title>
+  <link rel="stylesheet" href="style.css?v=20" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
+  <script src="app.js?v=6" defer></script>
+  <script src="journal.js?v=21" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="dot"></span>
+      <h1>Option OI Dashboard</h1>
+      <span id="sourceBadge" class="badge">NSE</span>
+      <nav class="tabs">
+        <button class="tab active" data-view="oi">📈 Dashboard</button>
+        <button class="tab" data-view="journal">📓 Journal</button>
+        <button class="tab" data-view="insights">🔍 Insights</button>
+        <button class="tab" data-view="rules">⚖ Rules</button>
+      </nav>
+    </div>
+    <div class="controls" id="oiControls">
+      <label>Index
+        <select id="symbol"></select>
+      </label>
+      <label>Expiry
+        <select id="expiry"></select>
+      </label>
+      <label class="switch">
+        <input type="checkbox" id="autoRefresh" checked />
+        <span>Auto</span>
+      </label>
+      <button id="refreshBtn" title="Refresh now">⟳ <span id="countdown">--</span>s</button>
+    </div>
+  </header>
+
+  <div id="statusBar" class="statusbar hidden"></div>
+
+  <div id="loginBox" class="loginbox hidden">
+    <div class="login-card">
+      <h2 id="loginTitle">Connect your broker</h2>
+      <p>Log in to load live option-chain data. The access token lasts for the
+         trading day, so you'll do this once each morning.</p>
+      <a class="login-btn" id="loginBtn" href="/auth/login">🔐 Log in</a>
+      <p class="login-hint" id="loginHint"></p>
+    </div>
+  </div>
+
+  <main id="viewOI">
+    <section class="tiles" id="tiles"></section>
+
+    <section class="charts">
+      <div class="card">
+        <h2>Change in OI <small>(current session build-up)</small></h2>
+        <div class="chart-wrap"><canvas id="chgOiChart"></canvas></div>
+      </div>
+      <div class="card">
+        <h2>Open Interest <small>(Call vs Put by strike)</small></h2>
+        <div class="chart-wrap"><canvas id="oiChart"></canvas></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Futures OI Build-up</h2>
+      <div class="table-scroll">
+        <table id="futTable" class="data">
+          <thead><tr><th>Expiry</th><th>Last</th><th>OI</th><th>Change in OI</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Option Chain <small id="chainMeta"></small></h2>
+      <div class="table-scroll">
+        <table id="chainTable" class="data chain">
+          <thead>
+            <tr>
+              <th colspan="4" class="call-head">CALLS</th>
+              <th class="strike-head">Strike</th>
+              <th colspan="4" class="put-head">PUTS</th>
+            </tr>
+            <tr>
+              <th>OI</th><th>Chg OI</th><th>IV</th><th>LTP</th>
+              <th class="strike-head"></th>
+              <th>LTP</th><th>IV</th><th>Chg OI</th><th>OI</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <main id="viewJournal" class="hidden">
+    <section id="ruleBanner" class="rulebanner hidden"></section>
+    <div id="untaggedNote" class="jnote hidden"></div>
+
+    <section class="jtargets">
+      <div class="card target" id="weeklyTarget"></div>
+      <div class="card target" id="monthlyTarget"></div>
+    </section>
+
+    <section class="jfilter" id="journalFilter">
+      <span class="jfilter-label">📅 Period</span>
+      <div class="seg" id="periodFilterSeg">
+        <button data-r="all" class="active">All time</button>
+        <button data-r="year">Year</button>
+        <button data-r="month">Month</button>
+        <button data-r="range">Custom</button>
+      </div>
+      <select id="filterYear" class="jfilter-sel hidden"></select>
+      <select id="filterMonth" class="jfilter-sel hidden"></select>
+      <input type="date" id="jfFrom" class="jfilter-sel hidden" />
+      <span id="jfRangeSep" class="jfilter-label hidden">to</span>
+      <input type="date" id="jfTo" class="jfilter-sel hidden" />
+      <span class="jfilter-range" id="filterRangeLabel"></span>
+    </section>
+
+    <section class="tiles" id="journalTiles"></section>
+
+    <section class="card">
+      <div class="jtoolbar">
+        <h2 style="margin:0" id="pnlChartTitle">Daily P&amp;L</h2>
+        <div class="chartctl">
+          <div class="seg" id="granSeg">
+            <button data-g="daily" class="active">Daily</button>
+            <button data-g="weekly">Weekly</button>
+            <button data-g="monthly">Monthly</button>
+          </div>
+          <div class="seg" id="typeSeg">
+            <button data-t="bar" class="active">📊 Bar</button>
+            <button data-t="line">📈 Line</button>
+          </div>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="pnlChart"></canvas></div>
+    </section>
+
+    <section class="card">
+      <div class="jtoolbar">
+        <h2 style="margin:0">Trades <small id="tradeCount"></small></h2>
+        <div class="jactions">
+          <button id="dhanBtn" class="jbtn primary">⬇ Sync from Dhan</button>
+          <label class="jbtn importbtn">📁 Import CSV<input type="file" id="csvInput" accept=".csv" hidden></label>
+          <button id="exportBtn" class="jbtn">⬇ Export CSV</button>
+          <button id="settingsBtn" class="jbtn">⚙ Rules &amp; Targets</button>
+        </div>
+      </div>
+      <div id="jstatus" class="jstatus hidden"></div>
+      <div class="table-scroll" style="max-height:440px">
+        <table id="tradesTable" class="data">
+          <thead><tr><th>Date</th><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Exit</th><th>P&amp;L</th><th>Setup</th><th>Plan</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p id="emptyJournal" class="empty hidden">No trades yet. Click <b>Sync today</b> after you trade (Fyers),
+        or <b>Import CSV</b> to load your past trades from a Fyers export.</p>
+    </section>
+  </main>
+
+  <div id="dhanModal" class="modal hidden">
+    <div class="modal-card">
+      <h2>Connect Dhan &amp; Sync Trades</h2>
+      <p class="modal-sub">Generate a 24-hour access token at <b>web.dhan.co → My Profile → Access DhanHQ APIs</b>,
+        then paste it here. Reading trades needs no IP setup. Token lasts 24h, so you'll refresh it daily.</p>
+      <div id="dhanStatus" class="jnote hidden"></div>
+      <label class="flab">Access Token <b style="color:var(--call)">(required)</b><input type="password" id="dhanToken" placeholder="paste the long token (eyJ0eXAi…)" /></label>
+      <label class="flab">Dhan Client ID <span style="opacity:.6">(optional)</span><input type="text" id="dhanClientId" placeholder="your Dhan client id — not required" /></label>
+      <h3>History range</h3>
+      <div class="trow">
+        <label>From<input type="date" id="dhanFrom" /></label>
+        <label>To<input type="date" id="dhanTo" /></label>
+      </div>
+      <div class="modal-actions">
+        <button id="dhanSaveSync" class="jbtn primary">Save &amp; Sync</button>
+        <button id="dhanCloseBtn" class="jbtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <main id="viewInsights" class="hidden">
+    <section class="card">
+      <div class="jtoolbar">
+        <h2 style="margin:0">Insights</h2>
+        <div class="chartctl">
+          <div class="seg" id="periodSeg">
+            <button data-p="this_month">This month</button>
+            <button data-p="3m" class="active">Last 3 months</button>
+            <button data-p="all">All time</button>
+          </div>
+        </div>
+      </div>
+      <div class="insfilter">
+        <span class="jfilter-label">🎯 Instrument</span>
+        <div class="seg" id="symbolSeg">
+          <button data-s="all" class="active">All</button>
+        </div>
+      </div>
+      <div id="insightSummary" class="jnote"></div>
+    </section>
+
+    <section class="card">
+      <h2>🤖 What your trades are telling you <small>auto-generated from your data</small></h2>
+      <div id="insightNarrative" class="insight-list"></div>
+    </section>
+
+    <section class="card">
+      <h2>P&amp;L by Day of Week <small>which weekday you win vs lose</small></h2>
+      <div id="weekdayCallout" class="callout hidden"></div>
+      <div class="chart-wrap"><canvas id="weekdayChart"></canvas></div>
+    </section>
+
+    <section class="card">
+      <div class="jtoolbar">
+        <h2 style="margin:0">📆 Every weekday <small>where your money is made and lost</small></h2>
+        <div class="insfilter" style="margin-top:0">
+          <span class="jfilter-label">📅 Date range</span>
+          <input type="date" id="insFrom" class="jfilter-sel" />
+          <span style="color:var(--muted);font-size:12px">to</span>
+          <input type="date" id="insTo" class="jfilter-sel" />
+          <button id="insRangeClear" class="jbtn" style="padding:6px 10px">Clear</button>
+        </div>
+      </div>
+      <div id="weekdayBestWorst" class="wd-bestworst"></div>
+      <div id="weekdayCards" class="wd-cards"></div>
+    </section>
+
+    <section class="jtargets">
+      <div class="card">
+        <h2>📅 Expiry day vs other days</h2>
+        <small class="modal-sub" style="margin:0 0 10px">Is expiry day costing you? (detected from the option's expiry in each trade's symbol)</small>
+        <section class="tiles" id="expiryTiles"></section>
+        <div id="expiryCallout" class="callout hidden" style="margin-top:10px"></div>
+      </div>
+      <div class="card">
+        <h2>🎯 By instrument</h2>
+        <small class="modal-sub" style="margin:0 0 10px">Which segment makes or loses you money — click a card to filter.</small>
+        <div id="instrumentCards" class="inst-cards"></div>
+        <div class="inst-hint">Tap a card to filter all insights to that instrument. Tap again to clear.</div>
+      </div>
+    </section>
+
+    <section class="jtargets">
+      <div class="card"><h2>🟢 Best days</h2><div id="topProfit" class="daylist"></div></div>
+      <div class="card"><h2>🔴 Worst days</h2><div id="topLoss" class="daylist"></div></div>
+    </section>
+
+    <section class="card">
+      <h2>Setup Discipline <small>trades on your plan vs off</small></h2>
+      <section class="tiles" id="setupTiles"></section>
+      <div class="table-scroll" style="margin-top:12px">
+        <table class="data" id="setupTable">
+          <thead><tr><th style="text-align:left">Setup</th><th>Trades</th><th>Win rate</th><th>P&amp;L</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="modal-sub">Tag your trades in the <b>Journal</b> tab (Setup + On-plan) to fill this in.</p>
+    </section>
+  </main>
+
+  <main id="viewRules" class="hidden">
+    <section class="card">
+      <div class="jtoolbar">
+        <h2 style="margin:0">Trading Rules &amp; Targets</h2>
+        <button id="saveSettings" class="jbtn primary">💾 Save Rules</button>
+      </div>
+      <p class="modal-sub">You get a warning in the Journal when a rule is broken during a trading day. Set your limits below.</p>
+      <div id="rulesForm"></div>
+      <h3>Monthly / Weekly Targets (₹)</h3>
+      <div class="trow">
+        <label>Weekly target<input type="number" id="tWeekly" /></label>
+        <label>Monthly target<input type="number" id="tMonthly" /></label>
+      </div>
+      <div id="rulesSaveStatus" class="jnote hidden" style="margin-top:12px"></div>
+    </section>
+
+    <section class="card" id="weekPlanCard">
+      <h2>🗓️ This week's plan <small>the daily target to reach your weekly goal</small></h2>
+      <div id="weekPlanOverall" class="wk-overall"></div>
+      <div id="weekPlanDays" class="wk-days"></div>
+    </section>
+
+    <section class="card" id="gamePlanCard">
+      <h2>🧭 Your Game Plan <small>built from your own trades — updates when you save</small></h2>
+      <div id="planHeadline" class="plan-headline"></div>
+      <div class="plan-charts" id="planCharts">
+        <div class="plan-chart">
+          <div class="plan-chart-title">P&amp;L by weekday</div>
+          <div class="plan-chart-wrap"><canvas id="planWeekdayChart"></canvas></div>
+        </div>
+        <div class="plan-chart">
+          <div class="plan-chart-title">P&amp;L by instrument</div>
+          <div class="plan-chart-wrap"><canvas id="planInstrumentChart"></canvas></div>
+        </div>
+        <div class="plan-chart">
+          <div class="plan-chart-title">Expiry day vs other days</div>
+          <div class="plan-chart-wrap"><canvas id="planExpiryChart"></canvas></div>
+        </div>
+      </div>
+      <div id="planItems" class="plan-list"></div>
+    </section>
+
+    <section class="tiles" id="ruleStats"></section>
+
+    <section class="card">
+      <h2>Rule Breaks <small>how many days you broke each rule</small></h2>
+      <div class="chart-wrap"><canvas id="ruleChart"></canvas></div>
+    </section>
+  </main>
+
+  <footer>
+    <span>Data: <span id="footSource">—</span> · <span id="footNote"></span> For personal use. Not investment advice.</span>
+    <span id="lastUpdated"></span>
+  </footer>
+</body>
+</html>
