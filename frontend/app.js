@@ -143,6 +143,18 @@ function tileFill(label, value, sub, pct, kind) {
   </div>`;
 }
 
+// Colored day-change for the Spot tile, e.g. "· ▲ +44.10 (+0.18%)".
+function spotChangeHtml(d) {
+  const pct = d.spot_change_pct, abs = d.spot_change;
+  if (pct == null && abs == null) return "";
+  const up = (pct != null ? pct : abs) >= 0;
+  const col = up ? "var(--put)" : "var(--call)";
+  const arrow = up ? "▲" : "▼";
+  const absTxt = abs == null ? "" : fmtSigned(Number(abs.toFixed(2)));
+  const pctTxt = pct == null ? "" : ` (${up ? "+" : ""}${fmt(pct, 2)}%)`;
+  return ` · <span style="color:${col};font-weight:600">${arrow} ${absTxt}${pctTxt}</span>`;
+}
+
 function renderTiles(d, s) {
   const biasPill = `<span class="pill ${s.bias}">${s.bias || "—"}</span>`;
   const pcrCls = s.pcr >= 1.3 ? "good" : s.pcr <= 0.7 ? "bad" : "neutral";
@@ -150,7 +162,7 @@ function renderTiles(d, s) {
   const callPct = Math.round((s.total_ce_oi / totOi) * 100);
   const putPct = 100 - callPct;
   $("tiles").innerHTML = [
-    tile("Spot", fmt(d.spot, 2), `ATM ${fmt(s.atm)}`),
+    tile("Spot", fmt(d.spot, 2), `ATM ${fmt(s.atm)}${spotChangeHtml(d)}`),
     tile("PCR", fmt(s.pcr, 2), biasPill, pcrCls),
     tile("Max Pain", fmt(s.max_pain), `vs spot ${fmtSigned(Math.round(d.spot - s.max_pain))}`),
     tile("Support (max Put OI)", fmt(s.support), "", "good"),

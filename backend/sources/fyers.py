@@ -225,13 +225,18 @@ class FyersDataSource(DataSource):
             data = resp.get("data", {}) or {}
 
         spot = 0.0
+        spot_change = spot_change_pct = None
         by_strike: dict[float, StrikeRow] = {}
         for item in data.get("optionsChain", []) or []:
             otype = item.get("option_type", "")
             if otype not in ("CE", "PE"):
-                # underlying row carries the index spot price
+                # underlying row carries the index spot price + day change
                 if float(item.get("strike_price", -1) or -1) == -1:
                     spot = float(item.get("ltp", spot) or spot)
+                    if item.get("ltpch") is not None:
+                        spot_change = float(item.get("ltpch") or 0)
+                    if item.get("ltpchp") is not None:
+                        spot_change_pct = float(item.get("ltpchp") or 0)
                 continue
             strike = float(item.get("strike_price", 0) or 0)
             row = by_strike.setdefault(strike, StrikeRow(strike=strike))
@@ -252,6 +257,7 @@ class FyersDataSource(DataSource):
             symbol=symbol, spot=spot, expiry=cur_expiry, expiries=expiries,
             timestamp=_ist_now().strftime("%d-%b-%Y %H:%M:%S IST"),
             rows=rows, source=self.name,
+            spot_change=spot_change, spot_change_pct=spot_change_pct,
         )
         chain.futures = self._fetch_futures(symbol, fy)
         return chain

@@ -57,11 +57,15 @@ class OptionChain:
     rows: list[StrikeRow] = field(default_factory=list)
     futures: list[FuturesRow] = field(default_factory=list)
     source: str = "nse"
+    spot_change: float | None = None       # absolute change vs previous close
+    spot_change_pct: float | None = None   # percent change vs previous close
 
     def as_dict(self) -> dict:
         return {
             "symbol": self.symbol,
             "spot": self.spot,
+            "spot_change": self.spot_change,
+            "spot_change_pct": self.spot_change_pct,
             "expiry": self.expiry,
             "expiries": self.expiries,
             "timestamp": self.timestamp,

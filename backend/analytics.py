@@ -64,6 +64,8 @@ def summarize(chain: OptionChain) -> dict:
     return {
         "symbol": chain.symbol,
         "spot": chain.spot,
+        "spot_change": chain.spot_change,
+        "spot_change_pct": chain.spot_change_pct,
         "expiry": chain.expiry,
         "timestamp": chain.timestamp,
         "source": chain.source,

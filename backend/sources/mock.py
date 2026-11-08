@@ -36,6 +36,8 @@ class MockDataSource(DataSource):
         base = _BASE.get(symbol, 24000)
         rnd = random.Random(int(time.time()) // 20 + hash(symbol))  # shifts every 20s
         spot = base + rnd.uniform(-step * 3, step * 3)
+        spot_change = round(spot - base, 2)                 # vs the day's "open"
+        spot_change_pct = round(spot_change / base * 100, 2) if base else 0.0
         atm = round(spot / step) * step
         expiries = _next_thursdays(4)
         if not expiry:
@@ -69,4 +71,5 @@ class MockDataSource(DataSource):
             symbol=symbol, spot=round(spot, 2), expiry=expiry, expiries=expiries,
             timestamp=time.strftime("%d-%b-%Y %H:%M:%S") + " (DEMO)",
             rows=rows, futures=futures, source=self.name,
+            spot_change=spot_change, spot_change_pct=spot_change_pct,
         )
