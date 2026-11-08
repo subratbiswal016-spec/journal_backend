@@ -143,16 +143,16 @@ function tileFill(label, value, sub, pct, kind) {
   </div>`;
 }
 
-// Colored day-change for the Spot tile, e.g. "· ▲ +44.10 (+0.18%)".
+// Colored day-change for the Spot tile, broker-style: "▲ +271.32  +0.33%".
 function spotChangeHtml(d) {
   const pct = d.spot_change_pct, abs = d.spot_change;
   if (pct == null && abs == null) return "";
   const up = (pct != null ? pct : abs) >= 0;
   const col = up ? "var(--put)" : "var(--call)";
   const arrow = up ? "▲" : "▼";
-  const absTxt = abs == null ? "" : fmtSigned(Number(abs.toFixed(2)));
-  const pctTxt = pct == null ? "" : ` (${up ? "+" : ""}${fmt(pct, 2)}%)`;
-  return ` · <span style="color:${col};font-weight:600">${arrow} ${absTxt}${pctTxt}</span>`;
+  const absTxt = abs == null ? "" : (abs >= 0 ? "+" : "") + fmt(abs, 2);
+  const pctTxt = pct == null ? "" : `  ${up ? "+" : ""}${fmt(pct, 2)}%`;
+  return `<br><span style="color:${col};font-weight:700">${arrow} ${absTxt}${pctTxt}</span>`;
 }
 
 function renderTiles(d, s) {
