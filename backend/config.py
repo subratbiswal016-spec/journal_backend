@@ -11,7 +11,9 @@ def _get(name: str, default: str) -> str:
 
 
 DATA_SOURCE = _get("DATA_SOURCE", "nse").lower()
-REFRESH_SECONDS = max(10, int(_get("REFRESH_SECONDS", "30")))
+# Lower floor of 3s so the dashboard can run near real-time. Keep a floor to
+# stay within the broker's rate limits (OI itself doesn't update sub-second).
+REFRESH_SECONDS = max(3, int(_get("REFRESH_SECONDS", "30")))
 SYMBOLS = [s.strip().upper() for s in _get("SYMBOLS", "NIFTY,BANKNIFTY,FINNIFTY,SENSEX").split(",") if s.strip()]
 
 # Shared OAuth callback path (both brokers redirect here)
