@@ -1,0 +1,16 @@
+.venv/
+.venv_old/
+.env
+.cache/
+.upstox_token.json
+.fyers_token.json
+snap.json
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Trade data (personal) — never publish
+.journal.db
+
+# Frontend lives in its own repo (journal_frontend)
+frontend/
