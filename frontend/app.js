@@ -225,8 +225,8 @@ function renderCharts(d, s) {
     interaction: { mode: "index", intersect: false },
     plugins: { legend: { labels: { color: "#c5cdda" } } },
     scales: {
-      x: { ticks: { color: "#8b95a7", maxRotation: 90, minRotation: 45 }, grid: { color: "rgba(255,255,255,.04)" } },
-      y: { ticks: { color: "#8b95a7" }, grid: { color: "rgba(255,255,255,.06)" } },
+      x: { ticks: { color: "#8b95a7", maxRotation: 90, minRotation: 45 }, grid: { color: "rgba(128,128,128,.15)" } },
+      y: { ticks: { color: "#8b95a7" }, grid: { color: "rgba(128,128,128,.18)" } },
     },
   };
 
@@ -273,5 +273,18 @@ function showStatus(msg, cls) {
   bar.className = "statusbar " + (cls || "");
   bar.textContent = msg;
 }
+
+// ---------- theme toggle (light / dark) ----------
+(function () {
+  const btn = document.getElementById("themeBtn");
+  if (!btn) return;
+  const setIcon = () => { btn.textContent = document.documentElement.classList.contains("light") ? "☀️" : "🌙"; };
+  setIcon();
+  btn.addEventListener("click", () => {
+    const light = document.documentElement.classList.toggle("light");
+    try { localStorage.setItem("oi-theme", light ? "light" : "dark"); } catch (e) {}
+    setIcon();
+  });
+})();
 
 init();

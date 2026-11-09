@@ -210,7 +210,7 @@
       plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => signed(c.raw) } } },
       scales: {
         x: { ticks: { color: "#8b95a7", maxRotation: 60, minRotation: 0 }, grid: { display: false } },
-        y: { ticks: { color: "#8b95a7" }, grid: { color: "rgba(255,255,255,.06)" } },
+        y: { ticks: { color: "#8b95a7" }, grid: { color: "rgba(128,128,128,.18)" } },
       },
     };
     if (pnlChart) pnlChart.destroy();
@@ -524,8 +524,8 @@
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => signed(c.raw) } } },
         scales: {
           x: { ticks: { color: "#8b95a7", callback: (v) => (Math.abs(v) >= 1000 ? "₹" + Math.round(v / 1000) + "k" : "₹" + v) },
-               grid: { color: "rgba(255,255,255,.06)" } },
-          y: { ticks: { color: "#c5cdda", font: { weight: "600" } }, grid: { display: false } },
+               grid: { color: "rgba(128,128,128,.18)" } },
+          y: { ticks: { color: "#8b95a7", font: { weight: "600" } }, grid: { display: false } },
         },
       },
     });
@@ -641,8 +641,8 @@
         indexAxis: "y", responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => c.raw + " days" } } },
         scales: {
-          x: { ticks: { color: "#8b95a7", precision: 0 }, grid: { color: "rgba(255,255,255,.06)" } },
-          y: { ticks: { color: "#c5cdda" }, grid: { display: false } },
+          x: { ticks: { color: "#8b95a7", precision: 0 }, grid: { color: "rgba(128,128,128,.18)" } },
+          y: { ticks: { color: "#8b95a7" }, grid: { display: false } },
         },
       },
     };
@@ -893,8 +893,8 @@
       plugins: { legend: { display: false },
         tooltip: { callbacks: { label: (c) => signed(c.raw), afterLabel: (c) => {
           const w = wd[c.dataIndex]; return `${w.days} days · ${w.win_rate}% win · avg ${signed(w.avg)}`; } } } },
-      scales: { x: { ticks: { color: "#c5cdda", font: { weight: "600" } }, grid: { display: false } },
-        y: { ticks: { color: "#8b95a7" }, grid: { color: "rgba(255,255,255,.06)" } } },
+      scales: { x: { ticks: { color: "#8b95a7", font: { weight: "600" } }, grid: { display: false } },
+        y: { ticks: { color: "#8b95a7" }, grid: { color: "rgba(128,128,128,.18)" } } },
     };
     if (weekdayChart) weekdayChart.destroy();
     weekdayChart = new Chart($("weekdayChart"), { type: "bar", data, options: opts });

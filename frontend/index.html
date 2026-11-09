@@ -4,7 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Option OI Dashboard</title>
-  <link rel="stylesheet" href="style.css?v=20" />
+  <script>try{if(localStorage.getItem('oi-theme')==='light')document.documentElement.classList.add('light');}catch(e){}</script>
+  <link rel="stylesheet" href="style.css?v=21" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
   <script src="app.js?v=6" defer></script>
   <script src="journal.js?v=21" defer></script>
@@ -21,6 +22,7 @@
         <button class="tab" data-view="insights">🔍 Insights</button>
         <button class="tab" data-view="rules">⚖ Rules</button>
       </nav>
+      <button id="themeBtn" class="theme-btn" title="Toggle light / dark theme">🌙</button>
     </div>
     <div class="controls" id="oiControls">
       <label>Index
