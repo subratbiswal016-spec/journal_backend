@@ -223,7 +223,7 @@ function renderCharts(d, s) {
   const common = {
     responsive: true, maintainAspectRatio: false,
     interaction: { mode: "index", intersect: false },
-    plugins: { legend: { labels: { color: "#c5cdda" } } },
+    plugins: { legend: { labels: { color: "#7a8498" } } },
     scales: {
       x: { ticks: { color: "#8b95a7", maxRotation: 90, minRotation: 45 }, grid: { color: "rgba(128,128,128,.15)" } },
       y: { ticks: { color: "#8b95a7" }, grid: { color: "rgba(128,128,128,.18)" } },
