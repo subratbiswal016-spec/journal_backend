@@ -12,6 +12,8 @@
   let JDAILY = [];            // dated daily P&L series
   let chartGran = "daily";    // daily | weekly | monthly
   let chartType = "bar";      // bar | line (cumulative)
+  let dhanConnected = false;  // whether a Dhan token is saved server-side
+  let dhanAutoSynced = false; // one auto-sync per page load
 
   // ---- period filter (All time / Year / Month / Custom range) ----
   let jfMode = "all";         // all | year | month | range
@@ -70,8 +72,10 @@
       renderFilterLabel();
       renderChart();
       renderTrades(d.recent_trades);
-      $("dhanBtn").textContent = d.dhan_connected ? "⬇ Sync from Dhan ✓" : "🔑 Connect Dhan";
+      dhanConnected = d.dhan_connected;
+      $("dhanBtn").textContent = dhanConnected ? "⬇ Sync from Dhan ✓" : "🔑 Connect Dhan";
       $("fyersSyncBtn").style.display = d.can_sync ? "" : "none";   // only on DATA_SOURCE=fyers
+      if (dhanConnected && !dhanAutoSynced) dhanSyncNow(true);      // auto-sync once per load
     } catch (e) {
       status("Could not load journal: " + e.message, true);
     }
@@ -389,26 +393,59 @@
     s.classList.remove("hidden");
   }
 
-  $("dhanBtn").addEventListener("click", () => {
+  function openDhanModal() {
     if (!$("dhanFrom").value) $("dhanFrom").value = fyStartISO();
     if (!$("dhanTo").value) $("dhanTo").value = todayISO();
     dhanMsg("");
     $("dhanModal").classList.remove("hidden");
+  }
+
+  // One-click sync using the saved token (no popup). Opens the modal to
+  // reconnect only when the token is missing/expired (and not an auto-sync).
+  async function dhanSyncNow(isAuto) {
+    dhanAutoSynced = true;                    // guard loadJournal auto-sync re-entry
+    const btn = $("dhanBtn"), old = btn.textContent;
+    btn.disabled = true; btn.textContent = "Syncing…";
+    status("Syncing your trades from Dhan…");
+    try {
+      const r = await fetch("/api/journal/dhan/sync", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from: fyStartISO(), to: todayISO() }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        if (r.status === 401) {
+          status("Dhan token expired — reconnect with a fresh token.", true);
+          if (!isAuto) openDhanModal();
+          return;
+        }
+        throw new Error(d.detail || "sync failed");
+      }
+      status(`✅ Synced ${d.round_trips} round-trips from ${d.raw_trades} Dhan trades` +
+        (d.date_range ? ` (${d.date_range[0]} → ${d.date_range[1]})` : "") +
+        ` · total ${signed(d.realized)}`);
+      loadJournal();
+    } catch (e) {
+      if (!isAuto) status("Dhan sync failed: " + e.message, true);
+    } finally {
+      btn.disabled = false; btn.textContent = old;
+    }
+  }
+
+  $("dhanBtn").addEventListener("click", () => {
+    if (dhanConnected) dhanSyncNow(false);    // connected → one-click re-sync
+    else openDhanModal();                     // first time → enter token
   });
   $("dhanCloseBtn").addEventListener("click", () => $("dhanModal").classList.add("hidden"));
 
   $("dhanSaveSync").addEventListener("click", async () => {
     const cid = $("dhanClientId").value.trim(), tok = $("dhanToken").value.trim();
+    if (!tok) { dhanMsg("Paste your Dhan access token first.", true); return; }
     try {
-      if (tok) {
-        await fetch("/api/journal/dhan/connect", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ client_id: cid, access_token: tok }),
-        });
-      } else if (!tok) {
-        dhanMsg("Paste your Dhan access token first.", true);
-        return;
-      }
+      await fetch("/api/journal/dhan/connect", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: cid, access_token: tok }),
+      });
       dhanMsg("Syncing your trade history from Dhan…");
       const r = await fetch("/api/journal/dhan/sync", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -416,10 +453,12 @@
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || "sync failed");
-      dhanMsg(`✅ Synced <b>${d.round_trips}</b> round-trips from ${d.raw_trades} Dhan trades` +
-        (d.date_range ? `, ${d.date_range[0]} → ${d.date_range[1]}` : "") +
-        `. Total <b>${signed(d.realized)}</b>. Your daily/weekly/monthly views are now live.`);
+      dhanAutoSynced = true;
       $("dhanToken").value = "";
+      $("dhanModal").classList.add("hidden");
+      status(`✅ Synced ${d.round_trips} round-trips from ${d.raw_trades} Dhan trades` +
+        (d.date_range ? ` (${d.date_range[0]} → ${d.date_range[1]})` : "") +
+        ` · total ${signed(d.realized)}. Daily/weekly/monthly views are now live.`);
       loadJournal();
     } catch (e) { dhanMsg("Dhan sync failed: " + e.message, true); }
   });
