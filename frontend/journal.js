@@ -71,6 +71,7 @@
       renderChart();
       renderTrades(d.recent_trades);
       $("dhanBtn").textContent = d.dhan_connected ? "⬇ Sync from Dhan ✓" : "🔑 Connect Dhan";
+      $("fyersSyncBtn").style.display = d.can_sync ? "" : "none";   // only on DATA_SOURCE=fyers
     } catch (e) {
       status("Could not load journal: " + e.message, true);
     }
@@ -294,6 +295,30 @@
     a.href = "/api/journal/export.csv" + filterQuery();
     a.download = "";
     document.body.appendChild(a); a.click(); a.remove();
+  });
+
+  // Pull today's executed trades straight from Fyers (no CSV needed).
+  $("fyersSyncBtn").addEventListener("click", async () => {
+    const btn = $("fyersSyncBtn");
+    const old = btn.textContent;
+    btn.disabled = true; btn.textContent = "Syncing…";
+    status("Fetching today's trades from Fyers…");
+    try {
+      const r = await fetch("/api/journal/sync", { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) {
+        if (r.status === 401) throw new Error("Not logged in to Fyers — open the Dashboard and click “Login with Fyers”, then try again.");
+        throw new Error(d.detail || d.error || "Sync failed");
+      }
+      status(`Synced ${d.round_trips} trade${d.round_trips === 1 ? "" : "s"} from Fyers` +
+        ` · today's P&L ${signed(d.realized_today)}` +
+        (d.open_positions ? ` · ${d.open_positions} open` : ""));
+      loadJournal();
+    } catch (e) {
+      status("Fyers sync: " + e.message, true);
+    } finally {
+      btn.disabled = false; btn.textContent = old;
+    }
   });
 
   function renderTrades(rows) {
