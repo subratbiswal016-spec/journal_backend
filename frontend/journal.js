@@ -13,7 +13,8 @@
   let chartGran = "daily";    // daily | weekly | monthly
   let chartType = "bar";      // bar | line (cumulative)
   let dhanConnected = false;  // whether a Dhan token is saved server-side
-  let dhanAutoSynced = false; // one auto-sync per page load
+  let dhanAutoSynced = false; // one Dhan auto-sync per page load
+  let fyersAutoSynced = false;// one Fyers auto-sync per page load
 
   // ---- period filter (All time / Year / Month / Custom range) ----
   let jfMode = "all";         // all | year | month | range
@@ -75,7 +76,8 @@
       dhanConnected = d.dhan_connected;
       $("dhanBtn").textContent = dhanConnected ? "⬇ Sync from Dhan ✓" : "🔑 Connect Dhan";
       $("fyersSyncBtn").style.display = d.can_sync ? "" : "none";   // only on DATA_SOURCE=fyers
-      if (dhanConnected && !dhanAutoSynced) dhanSyncNow(true);      // auto-sync once per load
+      if (dhanConnected && !dhanAutoSynced) dhanSyncNow(true);      // Dhan auto-sync once per load
+      if (d.can_sync && !fyersAutoSynced) fyersSyncNow(true);       // Fyers auto-sync once per load
     } catch (e) {
       status("Could not load journal: " + e.message, true);
     }
@@ -302,28 +304,33 @@
   });
 
   // Pull today's executed trades straight from Fyers (no CSV needed).
-  $("fyersSyncBtn").addEventListener("click", async () => {
-    const btn = $("fyersSyncBtn");
-    const old = btn.textContent;
+  // isAuto = fired automatically on load → fail quietly if not logged in.
+  async function fyersSyncNow(isAuto) {
+    fyersAutoSynced = true;                   // guard loadJournal auto-sync re-entry
+    const btn = $("fyersSyncBtn"), old = btn.textContent;
     btn.disabled = true; btn.textContent = "Syncing…";
-    status("Fetching today's trades from Fyers…");
+    if (!isAuto) status("Fetching today's trades from Fyers…");
     try {
       const r = await fetch("/api/journal/sync", { method: "POST" });
-      const d = await r.json();
+      const d = await r.json().catch(() => ({}));
       if (!r.ok) {
-        if (r.status === 401) throw new Error("Not logged in to Fyers — open the Dashboard and click “Login with Fyers”, then try again.");
+        if (r.status === 401) {
+          status("Log in to Fyers (Dashboard → Login with Fyers) to sync today's trades.", true);
+          return;
+        }
         throw new Error(d.detail || d.error || "Sync failed");
       }
-      status(`Synced ${d.round_trips} trade${d.round_trips === 1 ? "" : "s"} from Fyers` +
+      status(`✅ Synced ${d.round_trips} trade${d.round_trips === 1 ? "" : "s"} from Fyers` +
         ` · today's P&L ${signed(d.realized_today)}` +
         (d.open_positions ? ` · ${d.open_positions} open` : ""));
       loadJournal();
     } catch (e) {
-      status("Fyers sync: " + e.message, true);
+      if (!isAuto) status("Fyers sync: " + e.message, true);
     } finally {
       btn.disabled = false; btn.textContent = old;
     }
-  });
+  }
+  $("fyersSyncBtn").addEventListener("click", () => fyersSyncNow(false));
 
   function renderTrades(rows) {
     const tb = $("tradesTable").querySelector("tbody");
