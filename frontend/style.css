@@ -151,6 +151,15 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .tile.good .value { color: var(--put); }
 .tile.bad .value { color: var(--call); }
 .tile.neutral .value { color: var(--text); }
+
+/* Rounded accent bar at the bottom of each summary stat card */
+#journalTiles .tile { display: flex; flex-direction: column; }
+#journalTiles .tile::after { content: ""; display: block; height: 5px; border-radius: 20px;
+  margin-top: auto; background: var(--line); }
+#journalTiles .tile .value, #journalTiles .tile .label { flex: none; }
+#journalTiles .tile.good::after { background: linear-gradient(90deg, rgba(38,166,154,.30), #26a69a); }
+#journalTiles .tile.bad::after  { background: linear-gradient(90deg, rgba(239,83,80,.30), #ef5350); }
+#journalTiles .tile.neutral::after { background: linear-gradient(90deg, rgba(128,128,128,.22), rgba(128,128,128,.5)); }
 .pill { font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 600; }
 .pill.Bullish { background: var(--put-dim); color: var(--put); }
 .pill.Bearish { background: var(--call-dim); color: var(--call); }
