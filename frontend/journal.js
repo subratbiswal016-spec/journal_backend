@@ -269,6 +269,46 @@
   if ($("capPrev")) $("capPrev").addEventListener("click", () => capShiftMonth(-1));
   if ($("capNext")) $("capNext").addEventListener("click", () => capShiftMonth(1));
 
+  function capSaveMsg(msg, err) {
+    const s = $("capSaveMsg");
+    if (!s) return;
+    if (!msg) { s.classList.add("hidden"); return; }
+    s.className = "jnote" + (err ? " err" : "");
+    s.innerHTML = msg;
+    s.classList.remove("hidden");
+  }
+  // Explicit Save: persists opening capital + every visible day note at once,
+  // and confirms, so the user knows it's stored in the cloud.
+  async function capSaveAll() {
+    const btn = $("capSaveBtn"), old = btn.textContent;
+    btn.disabled = true; btn.textContent = "Saving…";
+    capSaveMsg("");
+    try {
+      const v = Number($("openingCapital").value) || 0;
+      const r = await fetch("/api/journal/capital", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ opening: v, month: capMonth }),
+      });
+      if (!r.ok) throw new Error("capital save failed");
+      const fresh = await r.json();
+      // Save any day notes currently on screen.
+      const noteEls = [...document.querySelectorAll(".cap-day-note")];
+      const res = await Promise.allSettled(noteEls.map((el) =>
+        fetch("/api/journal/daynote", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ date: el.dataset.date, note: el.value }),
+        })));
+      renderCapital(fresh);
+      const failed = res.filter((x) => x.status === "rejected").length;
+      capSaveMsg(failed
+        ? `Saved capital, but ${failed} note${failed === 1 ? "" : "s"} failed — try again.`
+        : "✓ Saved to the cloud. Your capital and notes are safe.", failed > 0);
+    } catch (e) {
+      capSaveMsg("Could not save — check your connection and try again.", true);
+    } finally { btn.disabled = false; btn.textContent = old; }
+  }
+  if ($("capSaveBtn")) $("capSaveBtn").addEventListener("click", capSaveAll);
+
   function capSyncMsg(msg, err) {
     const s = $("capSyncMsg");
     if (!s) return;
