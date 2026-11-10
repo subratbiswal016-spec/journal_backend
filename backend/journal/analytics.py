@@ -96,13 +96,28 @@ def set_month_costs(month: str, brokerage, charges) -> None:
     store.set_setting("monthly_costs", allc)
 
 
-# Approx NSE options charges for a discount broker (₹20/order). Rates shift with
-# the Budget; this is a 2024-25 estimate so Net P&L shows automatically. Enter
-# the broker's exact Brokerage/Charges for a month to override the estimate.
-_BROKERAGE_PER_ORDER = 20.0
+# Approx NSE options charges for a discount broker. Rates shift with the Budget;
+# this is a 2024-25 estimate so Net P&L shows automatically. Enter the broker's
+# exact Brokerage/Charges for a month to override the estimate.
+_DEFAULT_BROKERAGE_PER_ORDER = 20.0
+
+
+def get_brokerage_rate() -> float:
+    try:
+        v = float(store.get_setting("brokerage_per_order", _DEFAULT_BROKERAGE_PER_ORDER))
+        return max(0.0, v)
+    except (TypeError, ValueError):
+        return _DEFAULT_BROKERAGE_PER_ORDER
+
+
+def set_brokerage_rate(value) -> float:
+    r = max(0.0, float(value if value is not None else _DEFAULT_BROKERAGE_PER_ORDER))
+    store.set_setting("brokerage_per_order", r)
+    return r
 
 
 def estimate_month_charges(month: str) -> dict:
+    rate = get_brokerage_rate()
     y, mo = int(month[:4]), int(month[5:7])
     last = calendar.monthrange(y, mo)[1]
     trades = [t for t in store.trades_between(f"{y}-{mo:02d}-01", f"{y}-{mo:02d}-{last:02d}")
@@ -117,7 +132,7 @@ def estimate_month_charges(month: str) -> dict:
         else:                                       # SHORT: sold then bought
             buy_v, sell_v = value, max(0.0, value + pnl)
         turnover = buy_v + sell_v
-        brokerage += 2 * _BROKERAGE_PER_ORDER       # one buy + one sell order
+        brokerage += 2 * rate                       # one buy + one sell order
         stt += 0.001 * sell_v                       # 0.1% on options sell premium
         txn += 0.0003503 * turnover                 # NSE options exchange txn charge
         sebi += 0.000001 * turnover                 # ₹10 / crore
@@ -219,6 +234,7 @@ def capital_tracker(month: str | None = None) -> dict:
         "gross_pnl": gross_pnl, "brokerage": brokerage, "charges": charges,
         "total_cost": total_cost, "net_pnl": net_pnl,
         "costs_estimated": costs.get("estimated", False),
+        "brokerage_rate": get_brokerage_rate(),
         "total_pnl": net_pnl,                         # headline P&L is net
         "closing": closing, "return_pct": return_pct, "days": days,
         "trade_days": [d for d in days if d["traded"]],
@@ -323,6 +339,7 @@ def summary(start: str | None = None, end: str | None = None) -> dict:
         "win_rate": win_rate,
         "wins": wins, "losses": losses,
         "avg_day": round(sum(float(d["realized"] or 0) for d in dated) / len(dated), 2) if dated else 0.0,
+        "net_avg_day": round(net_realized / len(dated), 2) if dated else 0.0,
         "best_day": {"date": best["date"], "realized": round(float(best["realized"]), 2)} if best else None,
         "worst_day": {"date": worst["date"], "realized": round(float(worst["realized"]), 2)} if worst else None,
         "current_streak": _streak(dated),

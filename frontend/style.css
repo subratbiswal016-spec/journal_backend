@@ -330,6 +330,8 @@ footer {
 .cap-cost-field input { width: 180px; max-width: 100%; padding: 9px 11px; border-radius: 8px;
   border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font-size: 15px; font-weight: 600; }
 .cap-cost-field input:focus { outline: none; border-color: var(--accent); }
+.cap-rate-wrap { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 14px; }
+.cap-rate-wrap input { width: 64px; text-align: center; }
 .cap-breakdown { font-size: 13px; color: var(--muted); margin: 12px 0 0; }
 .cap-breakdown b.pos { color: var(--put); } .cap-breakdown b.neg { color: var(--call); }
 .cap-est { display: inline-block; margin-left: 8px; font-size: 11px; color: var(--warn);

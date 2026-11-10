@@ -375,6 +375,8 @@ async def journal_set_capital(request: Request):
     if "brokerage" in data or "charges" in data:
         month = (data.get("month") or _today_ist()[:7])
         janalytics.set_month_costs(month, data.get("brokerage"), data.get("charges"))
+    if "brokerage_rate" in data:
+        janalytics.set_brokerage_rate(data.get("brokerage_rate"))
     return janalytics.capital_tracker(data.get("month"))
 
 

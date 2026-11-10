@@ -168,6 +168,8 @@
       ch.value = c.costs_estimated ? "" : (c.charges || "");
       ch.placeholder = c.costs_estimated && c.charges ? "est. " + Math.round(c.charges) : "e.g. 3342";
     }
+    const rt = $("capBrokerageRate");
+    if (rt && document.activeElement !== rt) rt.value = c.brokerage_rate != null ? c.brokerage_rate : "";
     drawCapitalTiles(c);
     const td = c.trade_days || [];
     $("capJournalSub").textContent = td.length
@@ -301,6 +303,8 @@
       body.brokerage = Number(bkRaw) || 0;
       body.charges = Number(chRaw) || 0;
     }
+    const rtRaw = $("capBrokerageRate") ? $("capBrokerageRate").value : "";
+    if (rtRaw !== "") body.brokerage_rate = Number(rtRaw) || 0;
     return body;
   }
   function capPersist() {
@@ -313,6 +317,8 @@
     const el = $(id);
     if (el) { el.addEventListener("input", capLiveRecompute); el.addEventListener("change", capPersist); }
   });
+  // brokerage rate changes the estimate server-side → persist + reload (no live preview)
+  if ($("capBrokerageRate")) $("capBrokerageRate").addEventListener("change", capPersist);
   // Save a per-day note on change.
   if ($("capitalDays")) {
     $("capitalDays").addEventListener("change", (e) => {
@@ -460,12 +466,13 @@
     const st = s.current_streak || { type: "none", count: 0 };
     const streakTxt = st.count ? `${st.count} ${st.type} day${st.count > 1 ? "s" : ""}` : "—";
     const net = s.net_realized != null ? s.net_realized : s.total_realized;
+    const netAvg = s.net_avg_day != null ? s.net_avg_day : s.avg_day;
     $("journalTiles").innerHTML = [
-      tile("Gross P&L", signed(s.total_realized), `${s.trading_days} trading days · before costs`, s.total_realized >= 0 ? "good" : "bad"),
       tile("Net P&L", signed(net), s.total_costs ? `after ${s.costs_estimated ? "~" : ""}${inr(s.total_costs)} ${s.costs_estimated ? "est. costs" : "brokerage + charges"}` : "no costs yet", net >= 0 ? "good" : "bad"),
+      tile("Gross P&L", signed(s.total_realized), `${s.trading_days} trading days · before costs`, s.total_realized >= 0 ? "good" : "bad"),
       tile("Win rate", (s.win_rate || 0) + "%", `${s.wins}W / ${s.losses}L`, s.win_rate >= 50 ? "good" : "bad"),
       tile("Profit days", s.profit_days, `vs ${s.loss_days} loss days`, "good"),
-      tile("Avg / day", signed(s.avg_day), "", s.avg_day >= 0 ? "good" : "bad"),
+      tile("Avg / day (net)", signed(netAvg), `gross ${signed(s.avg_day)}/day`, netAvg >= 0 ? "good" : "bad"),
       tile("Best day", s.best_day ? signed(s.best_day.realized) : "—", s.best_day ? s.best_day.date : "", "good"),
       tile("Worst day", s.worst_day ? signed(s.worst_day.realized) : "—", s.worst_day ? s.worst_day.date : "", "bad"),
       tile("Current streak", streakTxt, "", st.type === "profit" ? "good" : st.type === "loss" ? "bad" : "neutral"),
