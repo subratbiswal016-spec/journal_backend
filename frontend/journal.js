@@ -476,8 +476,8 @@
       tile("Win rate", (s.win_rate || 0) + "%", `${s.wins}W / ${s.losses}L`, s.win_rate >= 50 ? "good" : "bad"),
       tile("Profit days", s.profit_days, `vs ${s.loss_days} loss days`, "good"),
       tile("Avg / day (net)", signed(netAvg), `gross ${signed(s.avg_day)}/day`, netAvg >= 0 ? "good" : "bad"),
-      tile("Best day", s.best_day ? signed(s.best_day.realized) : "—", s.best_day ? s.best_day.date : "", "good"),
-      tile("Worst day", s.worst_day ? signed(s.worst_day.realized) : "—", s.worst_day ? s.worst_day.date : "", "bad"),
+      tile("Best day", s.best_day ? signed(s.best_day.realized) : "—", s.best_day ? s.best_day.date : "", s.best_day && s.best_day.realized >= 0 ? "good" : "bad"),
+      tile("Worst day", s.worst_day ? signed(s.worst_day.realized) : "—", s.worst_day ? s.worst_day.date : "", s.worst_day && s.worst_day.realized >= 0 ? "good" : "bad"),
       tile("Current streak", streakTxt, "", st.type === "profit" ? "good" : st.type === "loss" ? "bad" : "neutral"),
       tile("Max drawdown", signed(maxDrawdown(s.daily || [])), "peak-to-trough", "bad"),
     ].join("");
