@@ -212,7 +212,6 @@ def journal_overview(start: Optional[str] = Query(None), end: Optional[str] = Qu
         "can_sync": _source.name == "fyers",
         "dhan_connected": jdhan.is_connected(),
         "summary": janalytics.summary(start, end),
-        "capital": janalytics.capital_summary(),
         "range": {"start": start, "end": end},
         "targets": janalytics.targets_progress(),
         "today": jrules.evaluate(today),
@@ -360,11 +359,26 @@ async def journal_set_targets(request: Request):
     return janalytics.set_targets(data)
 
 
+@app.get("/api/journal/capital-tracker")
+def journal_capital_tracker(month: Optional[str] = Query(None)):
+    return janalytics.capital_tracker(month)
+
+
 @app.post("/api/journal/capital")
 async def journal_set_capital(request: Request):
     data = await request.json()
     janalytics.set_capital(data.get("opening"))
-    return janalytics.capital_summary()
+    return janalytics.capital_tracker(data.get("month"))
+
+
+@app.post("/api/journal/daynote")
+async def journal_set_daynote(request: Request):
+    data = await request.json()
+    day = (data.get("date") or "").strip()
+    if not day:
+        raise HTTPException(status_code=400, detail="date required")
+    janalytics.set_day_note(day, data.get("note") or "")
+    return {"ok": True}
 
 
 # Serve index.html with no-cache so structural HTML changes (and the ?v= asset

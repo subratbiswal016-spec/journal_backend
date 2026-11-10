@@ -92,6 +92,75 @@ def capital_summary() -> dict:
             "closing": closing, "return_pct": return_pct}
 
 
+# ---- per-day journal notes (e.g. "Gap up"), keyed by date ----
+def get_day_notes() -> dict:
+    return store.get_setting("day_notes", {}) or {}
+
+
+def set_day_note(day: str, note: str) -> None:
+    notes = get_day_notes()
+    note = (note or "").strip()
+    if note:
+        notes[day] = note
+    else:
+        notes.pop(day, None)
+    store.set_setting("day_notes", notes)
+
+
+def _months_with_data() -> list[str]:
+    """Sorted YYYY-MM keys that have trades, always including the current month."""
+    months = {r["date"][:7] for r in store.all_daily()
+              if r["date"] != "unknown" and len(r["date"]) >= 7}
+    months.add(_today().strftime("%Y-%m"))
+    return sorted(months)
+
+
+def capital_tracker(month: str | None = None) -> dict:
+    """Month-scoped capital growth: opening capital + each day's synced P&L,
+    running cumulative capital, and a per-day journal. `month` is 'YYYY-MM'."""
+    today = _today()
+    if month and len(month) == 7:
+        year, mon = int(month[:4]), int(month[5:7])
+    else:
+        year, mon = today.year, today.month
+    last_day = calendar.monthrange(year, mon)[1]
+    m_start, m_end = date(year, mon, 1), date(year, mon, last_day)
+    opening = get_capital()
+
+    rows = {r["date"]: float(r["realized"] or 0)
+            for r in store.daily_between(m_start.isoformat(), m_end.isoformat())
+            if r["date"] != "unknown"}
+    notes = get_day_notes()
+
+    days, cumulative = [], 0.0
+    for i in range(1, last_day + 1):
+        d = date(year, mon, i)
+        ds = d.isoformat()
+        traded = ds in rows
+        if traded:
+            cumulative += rows[ds]
+        days.append({
+            "date": ds, "n": i, "label": f"D{i}",
+            "pnl": round(rows[ds], 2) if traded else None, "traded": traded,
+            "weekend": d.weekday() >= 5, "future": d > today,
+            "cumulative": round(cumulative, 2),
+            "capital": round(opening + cumulative, 2),
+            "note": notes.get(ds, ""),
+        })
+
+    total_pnl = round(cumulative, 2)
+    closing = round(opening + total_pnl, 2)
+    return_pct = round(total_pnl / opening * 100, 2) if opening else 0.0
+    return {
+        "month": f"{year}-{mon:02d}",
+        "month_label": f"{_MON_FULL[mon - 1]} {year}",
+        "opening": opening, "total_pnl": total_pnl, "closing": closing,
+        "return_pct": return_pct, "days": days,
+        "trade_days": [d for d in days if d["traded"]],
+        "months": _months_with_data(),
+    }
+
+
 def _weekdays_between(a: date, b: date) -> int:
     """Count Mon-Fri days in [a, b] inclusive (a simple trading-day proxy)."""
     if b < a:

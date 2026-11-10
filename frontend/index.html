@@ -19,6 +19,7 @@
       <nav class="tabs">
         <button class="tab active" data-view="oi">📈 Dashboard</button>
         <button class="tab" data-view="journal">📓 Journal</button>
+        <button class="tab" data-view="capital">💰 Capital</button>
         <button class="tab" data-view="insights">🔍 Insights</button>
         <button class="tab" data-view="rules">⚖ Rules</button>
       </nav>
@@ -101,15 +102,6 @@
     <section id="ruleBanner" class="rulebanner hidden"></section>
     <div id="untaggedNote" class="jnote hidden"></div>
 
-    <section class="card" id="capitalCard">
-      <h2>💰 Capital summary <small>opening capital, P&amp;L, and where you stand today</small></h2>
-      <label class="cap-field">Opening capital (Day 1)
-        <input type="number" id="openingCapital" min="0" step="1000" placeholder="e.g. 100000" />
-      </label>
-      <div class="cap-tiles" id="capitalTiles"></div>
-      <div class="cap-return" id="capitalReturn"></div>
-    </section>
-
     <section class="jtargets">
       <div class="card target" id="weeklyTarget"></div>
       <div class="card target" id="monthlyTarget"></div>
@@ -172,6 +164,34 @@
       </div>
       <p id="emptyJournal" class="empty hidden">No trades yet. Click <b>Sync today</b> after you trade (Fyers),
         or <b>Import CSV</b> to load your past trades from a Fyers export.</p>
+    </section>
+  </main>
+
+  <main id="viewCapital" class="hidden">
+    <section class="card" id="capitalCard">
+      <div class="cap-top">
+        <h2 style="margin:0">💰 Capital summary <small id="capMonthLabel"></small></h2>
+        <div class="cap-nav">
+          <button id="capPrev" class="jbtn" title="Previous month">‹</button>
+          <button id="capNext" class="jbtn" title="Next month">›</button>
+        </div>
+      </div>
+      <p class="cap-sub">Set your Day 1 capital once. As you sync trades, this month's P&amp;L updates it automatically.</p>
+      <label class="cap-field">Opening capital (Day 1)
+        <input type="number" id="openingCapital" min="0" step="1000" placeholder="e.g. 100000" />
+      </label>
+      <div class="cap-tiles" id="capitalTiles"></div>
+      <div class="cap-return" id="capitalReturn"></div>
+    </section>
+
+    <section class="card">
+      <h2>📈 Daily P&amp;L and growth <small>how your capital moved this month</small></h2>
+      <div class="chart-wrap"><canvas id="capitalChart"></canvas></div>
+    </section>
+
+    <section class="card">
+      <h2>🗒️ Daily journal <small id="capJournalSub"></small></h2>
+      <div id="capitalDays" class="cap-journal"></div>
     </section>
   </main>
 

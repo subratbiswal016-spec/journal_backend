@@ -50,11 +50,13 @@
       b.classList.toggle("active", b.dataset.view === view));
     $("viewOI").classList.toggle("hidden", view !== "oi");
     $("viewJournal").classList.toggle("hidden", view !== "journal");
+    $("viewCapital").classList.toggle("hidden", view !== "capital");
     $("viewRules").classList.toggle("hidden", view !== "rules");
     $("viewInsights").classList.toggle("hidden", view !== "insights");
     const oiCtl = $("oiControls");
     if (oiCtl) oiCtl.style.display = view === "oi" ? "" : "none";
     if (view === "journal") loadJournal();
+    if (view === "capital") loadCapital();
     if (view === "rules") loadRules();
     if (view === "insights") loadInsights();
   }
@@ -66,7 +68,6 @@
       lastOverview = d;
       renderBanner(d.today);
       renderUntagged(d.summary);
-      renderCapital(d.capital);
       renderTargets(d.targets);
       renderTiles(d.summary);
       JDAILY = d.summary.daily || [];
@@ -111,48 +112,158 @@
     }
   }
 
-  // ---- Capital summary: opening capital -> P&L -> closing + return % ----
-  let capLast = { opening: 0, total_pnl: 0, closing: 0, return_pct: 0 };
+  // ================= Capital tracker page (monthly) =================
+  let capMonth = null;              // 'YYYY-MM' currently viewed (null = current)
+  let capData = null;               // last loaded tracker payload
+  let capitalChart = null;
+
+  async function loadCapital() {
+    try {
+      const q = capMonth ? "?month=" + encodeURIComponent(capMonth) : "";
+      capData = await (await fetch("/api/journal/capital-tracker" + q)).json();
+      capMonth = capData.month;
+      renderCapital(capData);
+    } catch (e) {
+      status("Could not load capital tracker: " + e.message, true);
+    }
+  }
+
   function renderCapital(c) {
-    capLast = c || capLast;
+    capData = c;
+    $("capMonthLabel").textContent = c.month_label;
+    // month nav: disable prev/next when no data beyond the ends
+    const months = c.months || [];
+    const idx = months.indexOf(c.month);
+    $("capPrev").disabled = idx <= 0;
+    $("capNext").disabled = idx < 0 || idx >= months.length - 1;
     const inp = $("openingCapital");
-    if (inp && document.activeElement !== inp) inp.value = capLast.opening || "";
-    drawCapital(capLast);
+    if (inp && document.activeElement !== inp) inp.value = c.opening || "";
+    drawCapitalTiles(c);
+    const td = c.trade_days || [];
+    $("capJournalSub").textContent = td.length
+      ? `${td.length} trading day${td.length === 1 ? "" : "s"} this month`
+      : "no trades this month yet";
+    renderCapitalChart(c);
+    renderCapitalDays(c);
   }
-  function capTile(label, value, cls) {
+
+  function capTile(label, value, cls, sub) {
     return `<div class="cap-tile"><div class="cap-label">${label}</div>` +
-      `<div class="cap-value ${cls || ""}">${value}</div></div>`;
+      `<div class="cap-value ${cls || ""}">${value}</div>` +
+      (sub ? `<div class="cap-subval">${sub}</div>` : "") + `</div>`;
   }
-  function drawCapital(c) {
+  function drawCapitalTiles(c) {
     $("capitalTiles").innerHTML =
       capTile("Opening capital", inr(c.opening)) +
-      capTile("Total profit / loss", signed(c.total_pnl), c.total_pnl >= 0 ? "pos" : "neg") +
-      capTile("Closing capital today", inr(c.closing));
+      capTile("Profit / loss this month", signed(c.total_pnl), c.total_pnl >= 0 ? "pos" : "neg") +
+      capTile("Closing capital", inr(c.closing));
     const ret = $("capitalReturn");
     if (!c.opening) {
       ret.innerHTML = `<span class="cap-hint">Enter your Day 1 capital above to see your return.</span>`;
     } else {
       const rc = c.return_pct >= 0 ? "pos" : "neg";
       const sign = c.return_pct >= 0 ? "+" : "";
-      ret.innerHTML = `Return on opening capital: <b class="${rc}">${sign}${Number(c.return_pct).toFixed(2)}%</b>`;
+      ret.innerHTML = `Return this month: <b class="${rc}">${sign}${Number(c.return_pct).toFixed(2)}%</b>` +
+        ` <span class="cap-hint">· on ${inr(c.opening)} opening capital</span>`;
     }
   }
-  // Live local recompute while typing; persist on change (blur / Enter).
+
+  function renderCapitalChart(c) {
+    const days = c.days || [];
+    const labels = days.map((d) => d.label);
+    const bars = days.map((d) => (d.traded ? d.pnl : null));
+    const barColors = days.map((d) => (d.pnl >= 0 ? "#26a69a" : "#ef5350"));
+    // Cumulative capital line (only up to the last traded / today's day)
+    const lastIdx = Math.max(0, ...days.map((d, i) => (d.traded ? i : -1)));
+    const line = days.map((d, i) => (i <= lastIdx && !d.future ? d.capital : null));
+    const data = {
+      labels,
+      datasets: [
+        { type: "bar", label: "Daily P&L", data: bars, backgroundColor: barColors,
+          borderRadius: 3, maxBarThickness: 18, yAxisID: "y", order: 2 },
+        { type: "line", label: "Capital", data: line, borderColor: "#f0b429",
+          backgroundColor: "rgba(240,180,41,.12)", borderWidth: 2, tension: .25,
+          pointRadius: 0, fill: true, yAxisID: "y1", order: 1, spanGaps: true },
+      ],
+    };
+    const opts = {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { labels: { color: "#8b95a7", usePointStyle: true, boxWidth: 8 } },
+        tooltip: { callbacks: { label: (x) => `${x.dataset.label}: ${x.raw == null ? "—" : "₹" + Number(x.raw).toLocaleString("en-IN")}` } },
+      },
+      scales: {
+        x: { ticks: { color: "#8b95a7", maxRotation: 0, autoSkip: true, maxTicksLimit: 16 },
+             grid: { display: false } },
+        y: { position: "left", ticks: { color: "#8b95a7", callback: (v) => (Math.abs(v) >= 1000 ? "₹" + Math.round(v / 1000) + "k" : "₹" + v) },
+             grid: { color: "rgba(128,128,128,.18)" } },
+        y1: { position: "right", ticks: { color: "#b78a1a", callback: (v) => "₹" + Math.round(v / 1000) + "k" },
+              grid: { display: false } },
+      },
+    };
+    if (!capitalChart) capitalChart = new Chart($("capitalChart"), { data, options: opts });
+    else { capitalChart.data = data; capitalChart.options = opts; capitalChart.update(); }
+  }
+
+  function renderCapitalDays(c) {
+    const el = $("capitalDays");
+    const td = c.trade_days || [];
+    if (!td.length) {
+      el.innerHTML = `<p class="empty">No trades synced for ${c.month_label} yet. ` +
+        `Go to the <b>Journal</b> tab and sync from Fyers/Dhan, and your days will appear here.</p>`;
+      return;
+    }
+    el.innerHTML = td.map((d) => {
+      const wd = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][new Date(d.date).getDay() === 0 ? 6 : new Date(d.date).getDay() - 1];
+      const cls = d.pnl >= 0 ? "pos" : "neg";
+      return `<div class="cap-day">
+        <div class="cap-day-date"><b>D${d.n}</b><span>${wd} · ${d.date}</span></div>
+        <div class="cap-day-pnl ${cls}">${signed(d.pnl)}</div>
+        <input class="cap-day-note" data-date="${d.date}" value="${esc(d.note || "")}" placeholder="note (e.g. Gap up)…" />
+        <div class="cap-day-cap">→ ${inr(d.capital)}</div>
+      </div>`;
+    }).join("");
+  }
+
+  // Opening capital: live recompute while typing; persist on change.
   if ($("openingCapital")) {
     $("openingCapital").addEventListener("input", () => {
+      if (!capData) return;
       const v = Number($("openingCapital").value) || 0;
-      const pnl = capLast.total_pnl || 0;
-      drawCapital({ opening: v, total_pnl: pnl, closing: v + pnl,
+      const pnl = capData.total_pnl || 0;
+      drawCapitalTiles({ opening: v, total_pnl: pnl, closing: v + pnl,
         return_pct: v ? (pnl / v * 100) : 0 });
     });
     $("openingCapital").addEventListener("change", () => {
       const v = Number($("openingCapital").value) || 0;
       fetch("/api/journal/capital", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ opening: v }),
+        body: JSON.stringify({ opening: v, month: capMonth }),
       }).then((r) => r.json()).then(renderCapital).catch(() => {});
     });
   }
+  // Save a per-day note on change.
+  if ($("capitalDays")) {
+    $("capitalDays").addEventListener("change", (e) => {
+      const el = e.target;
+      if (!el.classList || !el.classList.contains("cap-day-note")) return;
+      fetch("/api/journal/daynote", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: el.dataset.date, note: el.value }),
+      }).catch(() => {});
+    });
+  }
+  function capShiftMonth(delta) {
+    const months = (capData && capData.months) || [];
+    const idx = months.indexOf(capMonth);
+    const ni = idx + delta;
+    if (ni < 0 || ni >= months.length) return;
+    capMonth = months[ni];
+    loadCapital();
+  }
+  if ($("capPrev")) $("capPrev").addEventListener("click", () => capShiftMonth(-1));
+  if ($("capNext")) $("capNext").addEventListener("click", () => capShiftMonth(1));
 
   function targetCard(name, t) {
     return `<div class="tlabel">${name} Target</div>
