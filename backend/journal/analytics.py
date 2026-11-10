@@ -81,6 +81,21 @@ def set_capital(value) -> float:
     return v
 
 
+# ---- per-month costs (brokerage + charges), to match the broker's Net P&L ----
+def get_month_costs(month: str) -> dict:
+    allc = store.get_setting("monthly_costs", {}) or {}
+    c = allc.get(month, {}) or {}
+    return {"brokerage": float(c.get("brokerage") or 0),
+            "charges": float(c.get("charges") or 0)}
+
+
+def set_month_costs(month: str, brokerage, charges) -> None:
+    allc = store.get_setting("monthly_costs", {}) or {}
+    allc[month] = {"brokerage": max(0.0, float(brokerage or 0)),
+                   "charges": max(0.0, float(charges or 0))}
+    store.set_setting("monthly_costs", allc)
+
+
 def capital_summary() -> dict:
     """Opening capital + all-time realized P&L -> closing capital and return %."""
     opening = get_capital()
@@ -148,14 +163,22 @@ def capital_tracker(month: str | None = None) -> dict:
             "note": notes.get(ds, ""),
         })
 
-    total_pnl = round(cumulative, 2)
-    closing = round(opening + total_pnl, 2)
-    return_pct = round(total_pnl / opening * 100, 2) if opening else 0.0
+    month_key = f"{year}-{mon:02d}"
+    gross_pnl = round(cumulative, 2)
+    costs = get_month_costs(month_key)
+    brokerage, charges = costs["brokerage"], costs["charges"]
+    total_cost = round(brokerage + charges, 2)
+    net_pnl = round(gross_pnl - total_cost, 2)        # matches broker's Net P&L
+    closing = round(opening + net_pnl, 2)             # closing reflects net
+    return_pct = round(net_pnl / opening * 100, 2) if opening else 0.0
     return {
-        "month": f"{year}-{mon:02d}",
+        "month": month_key,
         "month_label": f"{_MON_FULL[mon - 1]} {year}",
-        "opening": opening, "total_pnl": total_pnl, "closing": closing,
-        "return_pct": return_pct, "days": days,
+        "opening": opening,
+        "gross_pnl": gross_pnl, "brokerage": brokerage, "charges": charges,
+        "total_cost": total_cost, "net_pnl": net_pnl,
+        "total_pnl": net_pnl,                         # headline P&L is net
+        "closing": closing, "return_pct": return_pct, "days": days,
         "trade_days": [d for d in days if d["traded"]],
         "months": _months_with_data(),
     }
@@ -239,8 +262,16 @@ def summary(start: str | None = None, end: str | None = None) -> dict:
     best = max(dated, key=lambda d: float(d["realized"] or 0), default=None)
     worst = min(dated, key=lambda d: float(d["realized"] or 0), default=None)
 
+    # Net P&L = gross − the brokerage/charges entered for the months in range.
+    months_in_range = sorted({d["date"][:7] for d in dated if len(d["date"]) >= 7})
+    total_costs = round(sum(get_month_costs(m)["brokerage"] + get_month_costs(m)["charges"]
+                            for m in months_in_range), 2)
+    net_realized = round(total - total_costs, 2)
+
     return {
         "total_realized": total,
+        "total_costs": total_costs,
+        "net_realized": net_realized,
         "trading_days": len(dated),
         "profit_days": len(profit_days),
         "loss_days": len(loss_days),

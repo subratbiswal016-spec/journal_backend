@@ -157,6 +157,9 @@
       ? "⬇ Sync this month (Dhan)" : "🔑 Connect Dhan";
     const inp = $("openingCapital");
     if (inp && document.activeElement !== inp) inp.value = c.opening || "";
+    const bk = $("capBrokerage"), ch = $("capCharges");
+    if (bk && document.activeElement !== bk) bk.value = c.brokerage || "";
+    if (ch && document.activeElement !== ch) ch.value = c.charges || "";
     drawCapitalTiles(c);
     const td = c.trade_days || [];
     $("capJournalSub").textContent = td.length
@@ -172,17 +175,34 @@
       (sub ? `<div class="cap-subval">${sub}</div>` : "") + `</div>`;
   }
   function drawCapitalTiles(c) {
+    const net = c.net_pnl != null ? c.net_pnl : c.total_pnl;
     $("capitalTiles").innerHTML =
       capTile("Opening capital", inr(c.opening)) +
-      capTile("Profit / loss this month", signed(c.total_pnl), c.total_pnl >= 0 ? "pos" : "neg") +
+      capTile("Net P&L this month", signed(net), net >= 0 ? "pos" : "neg",
+        c.total_cost ? `gross ${signed(c.gross_pnl)} − costs ${inr(c.total_cost)}` : "") +
       capTile("Closing capital", inr(c.closing));
+    // breakdown line (matches the broker's monthly summary)
+    const bd = $("capitalBreakdown");
+    if (bd) {
+      if (c.total_cost) {
+        bd.classList.remove("hidden");
+        bd.innerHTML =
+          `Gross P&L <b class="${c.gross_pnl >= 0 ? "pos" : "neg"}">${signed(c.gross_pnl)}</b>` +
+          ` − Brokerage <b class="neg">${inr(c.brokerage)}</b>` +
+          ` − Charges <b class="neg">${inr(c.charges)}</b>` +
+          ` = Net <b class="${net >= 0 ? "pos" : "neg"}">${signed(net)}</b>`;
+      } else {
+        bd.classList.add("hidden");
+        bd.innerHTML = "";
+      }
+    }
     const ret = $("capitalReturn");
     if (!c.opening) {
       ret.innerHTML = `<span class="cap-hint">Enter your Day 1 capital above to see your return.</span>`;
     } else {
       const rc = c.return_pct >= 0 ? "pos" : "neg";
       const sign = c.return_pct >= 0 ? "+" : "";
-      ret.innerHTML = `Return this month: <b class="${rc}">${sign}${Number(c.return_pct).toFixed(2)}%</b>` +
+      ret.innerHTML = `Return this month (net): <b class="${rc}">${sign}${Number(c.return_pct).toFixed(2)}%</b>` +
         ` <span class="cap-hint">· on ${inr(c.opening)} opening capital</span>`;
     }
   }
@@ -245,23 +265,33 @@
     }).join("");
   }
 
-  // Opening capital: live recompute while typing; persist on change.
-  if ($("openingCapital")) {
-    $("openingCapital").addEventListener("input", () => {
-      if (!capData) return;
-      const v = Number($("openingCapital").value) || 0;
-      const pnl = capData.total_pnl || 0;
-      drawCapitalTiles({ opening: v, total_pnl: pnl, closing: v + pnl,
-        return_pct: v ? (pnl / v * 100) : 0 });
-    });
-    $("openingCapital").addEventListener("change", () => {
-      const v = Number($("openingCapital").value) || 0;
-      fetch("/api/journal/capital", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ opening: v, month: capMonth }),
-      }).then((r) => r.json()).then(renderCapital).catch(() => {});
-    });
+  // Opening capital / brokerage / charges: live recompute of Net P&L while
+  // typing, persist on change (blur) as a safety net alongside the Save button.
+  function capLiveRecompute() {
+    if (!capData) return;
+    const opening = Number($("openingCapital").value) || 0;
+    const brokerage = Number($("capBrokerage").value) || 0;
+    const charges = Number($("capCharges").value) || 0;
+    const gross = capData.gross_pnl != null ? capData.gross_pnl : (capData.total_pnl || 0);
+    const total_cost = brokerage + charges;
+    const net = gross - total_cost;
+    drawCapitalTiles({ opening, gross_pnl: gross, brokerage, charges,
+      total_cost, net_pnl: net, total_pnl: net, closing: opening + net,
+      return_pct: opening ? (net / opening * 100) : 0 });
   }
+  function capPersist() {
+    fetch("/api/journal/capital", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        opening: Number($("openingCapital").value) || 0,
+        brokerage: Number($("capBrokerage").value) || 0,
+        charges: Number($("capCharges").value) || 0, month: capMonth }),
+    }).then((r) => r.json()).then(renderCapital).catch(() => {});
+  }
+  ["openingCapital", "capBrokerage", "capCharges"].forEach((id) => {
+    const el = $(id);
+    if (el) { el.addEventListener("input", capLiveRecompute); el.addEventListener("change", capPersist); }
+  });
   // Save a per-day note on change.
   if ($("capitalDays")) {
     $("capitalDays").addEventListener("change", (e) => {
@@ -300,9 +330,11 @@
     capSaveMsg("");
     try {
       const v = Number($("openingCapital").value) || 0;
+      const brokerage = Number($("capBrokerage").value) || 0;
+      const charges = Number($("capCharges").value) || 0;
       const r = await fetch("/api/journal/capital", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ opening: v, month: capMonth }),
+        body: JSON.stringify({ opening: v, month: capMonth, brokerage, charges }),
       });
       if (!r.ok) throw new Error("capital save failed");
       const fresh = await r.json();
@@ -409,8 +441,10 @@
   function renderTiles(s) {
     const st = s.current_streak || { type: "none", count: 0 };
     const streakTxt = st.count ? `${st.count} ${st.type} day${st.count > 1 ? "s" : ""}` : "—";
+    const net = s.net_realized != null ? s.net_realized : s.total_realized;
     $("journalTiles").innerHTML = [
-      tile("Total P&L", signed(s.total_realized), `${s.trading_days} trading days`, s.total_realized >= 0 ? "good" : "bad"),
+      tile("Gross P&L", signed(s.total_realized), `${s.trading_days} trading days · before costs`, s.total_realized >= 0 ? "good" : "bad"),
+      tile("Net P&L", signed(net), s.total_costs ? `after ${inr(s.total_costs)} brokerage + charges` : "set costs on Capital tab", net >= 0 ? "good" : "bad"),
       tile("Win rate", (s.win_rate || 0) + "%", `${s.wins}W / ${s.losses}L`, s.win_rate >= 50 ? "good" : "bad"),
       tile("Profit days", s.profit_days, `vs ${s.loss_days} loss days`, "good"),
       tile("Avg / day", signed(s.avg_day), "", s.avg_day >= 0 ? "good" : "bad"),

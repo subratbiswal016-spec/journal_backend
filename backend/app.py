@@ -372,6 +372,9 @@ def journal_capital_tracker(month: Optional[str] = Query(None)):
 async def journal_set_capital(request: Request):
     data = await request.json()
     janalytics.set_capital(data.get("opening"))
+    if "brokerage" in data or "charges" in data:
+        month = (data.get("month") or _today_ist()[:7])
+        janalytics.set_month_costs(month, data.get("brokerage"), data.get("charges"))
     return janalytics.capital_tracker(data.get("month"))
 
 

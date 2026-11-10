@@ -186,6 +186,14 @@
           <button id="capSaveBtn" class="jbtn primary">💾 Save</button>
         </div>
       </div>
+      <div class="cap-costs">
+        <label class="cap-cost-field">Brokerage <small>(this month, from broker)</small>
+          <input type="number" id="capBrokerage" min="0" step="1" placeholder="e.g. 3600" />
+        </label>
+        <label class="cap-cost-field">Charges <small>(STT, GST, exchange…)</small>
+          <input type="number" id="capCharges" min="0" step="1" placeholder="e.g. 3342" />
+        </label>
+      </div>
       <div class="cap-saverow">
         <span id="capSaveMsg" class="jnote hidden"></span>
       </div>
@@ -195,6 +203,7 @@
         <span id="capSyncMsg" class="jnote hidden"></span>
       </div>
       <div class="cap-tiles" id="capitalTiles"></div>
+      <div class="cap-breakdown hidden" id="capitalBreakdown"></div>
       <div class="cap-return" id="capitalReturn"></div>
     </section>
 

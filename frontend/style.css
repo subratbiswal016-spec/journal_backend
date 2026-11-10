@@ -324,6 +324,14 @@ footer {
 .cap-sub { color: var(--muted); font-size: 13px; margin: 6px 0 14px; }
 .cap-saverow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 12px; }
 .cap-saverow .jnote { margin: 0; }
+.cap-costs { display: flex; flex-wrap: wrap; gap: 14px; margin: 0 0 14px; }
+.cap-cost-field { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: var(--muted); }
+.cap-cost-field small { color: var(--muted); font-weight: 400; opacity: .8; }
+.cap-cost-field input { width: 180px; max-width: 100%; padding: 9px 11px; border-radius: 8px;
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font-size: 15px; font-weight: 600; }
+.cap-cost-field input:focus { outline: none; border-color: var(--accent); }
+.cap-breakdown { font-size: 13px; color: var(--muted); margin: 12px 0 0; }
+.cap-breakdown b.pos { color: var(--put); } .cap-breakdown b.neg { color: var(--call); }
 .cap-sync { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 16px; }
 .cap-sync .jnote { margin: 0; }
 .cap-subval { font-size: 12px; color: var(--muted); margin-top: 2px; }
