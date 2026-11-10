@@ -458,8 +458,22 @@
     $("monthlyTarget").innerHTML = targetCard("Monthly", tg.monthly);
   }
 
-  function tile(label, val, sub, cls) {
-    return `<div class="tile ${cls || "neutral"}"><div class="label">${label}</div>` +
+  // Circular % ring (donut) for a stat card. pct can be any number; the arc
+  // fills by |pct| capped at 100%, the centre shows the real value.
+  function ring(pct, cls) {
+    if (pct == null || isNaN(pct)) return "";
+    const R = 15, C = 2 * Math.PI * R;
+    const frac = Math.max(0, Math.min(1, Math.abs(pct) / 100));
+    const shown = Math.abs(pct) >= 100 ? Math.round(pct) : (Math.round(pct * 10) / 10);
+    return `<svg class="tring ${cls || "neutral"}" viewBox="0 0 40 40">` +
+      `<circle class="tring-bg" cx="20" cy="20" r="${R}"/>` +
+      `<circle class="tring-fg" cx="20" cy="20" r="${R}" transform="rotate(-90 20 20)" ` +
+      `stroke-dasharray="${(frac * C).toFixed(1)} ${((1 - frac) * C).toFixed(1)}"/>` +
+      `<text class="tring-tx" x="20" y="20" dominant-baseline="central" text-anchor="middle">${shown}%</text></svg>`;
+  }
+  function tile(label, val, sub, cls, pct, ringCls) {
+    return `<div class="tile ${cls || "neutral"}">${ring(pct, ringCls || cls)}` +
+      `<div class="label">${label}</div>` +
       `<div class="value">${val}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
   }
   function renderTiles(s) {
@@ -467,19 +481,23 @@
     const streakTxt = st.count ? `${st.count} ${st.type} day${st.count > 1 ? "s" : ""}` : "—";
     const net = s.net_realized != null ? s.net_realized : s.total_realized;
     const netAvg = s.net_avg_day != null ? s.net_avg_day : s.avg_day;
+    const cap = s.opening_capital || 0;
+    const ret = (v) => (cap ? (v / cap) * 100 : null);   // return on opening capital
+    const dd = maxDrawdown(s.daily || []);
+    const dayPct = s.trading_days ? (s.profit_days / s.trading_days) * 100 : 0;
     $("journalTiles").innerHTML = [
-      tile("Net P&L", signed(net), s.total_costs ? `after ${s.costs_estimated ? "~" : ""}${inr(s.total_costs)} ${s.costs_estimated ? "est. costs" : "brokerage + charges"}` : "no costs yet", net >= 0 ? "good" : "bad"),
-      tile("Overall P&L", signed(s.total_realized), `${s.trading_days} trading days · before costs`, s.total_realized >= 0 ? "good" : "bad"),
-      tile("Brokerage", inr(s.total_brokerage || 0), s.costs_estimated ? "estimated" : "from broker", "neutral"),
-      tile("Charges", inr(s.total_charges || 0), "STT · GST · exchange", "neutral"),
+      tile("Net P&L", signed(net), s.total_costs ? `after ${s.costs_estimated ? "~" : ""}${inr(s.total_costs)} ${s.costs_estimated ? "est. costs" : "brokerage + charges"}` : "no costs yet", net >= 0 ? "good" : "bad", ret(net)),
+      tile("Overall P&L", signed(s.total_realized), `${s.trading_days} trading days · before costs`, s.total_realized >= 0 ? "good" : "bad", ret(s.total_realized)),
+      tile("Brokerage", inr(s.total_brokerage || 0), s.costs_estimated ? "estimated" : "from broker", "neutral", ret(s.total_brokerage)),
+      tile("Charges", inr(s.total_charges || 0), "STT · GST · exchange", "neutral", ret(s.total_charges)),
       tile("Total trades", fmt(s.total_trades || 0), "round-trips this period", "neutral"),
-      tile("Win rate", (s.win_rate || 0) + "%", `${s.wins}W / ${s.losses}L`, s.win_rate >= 50 ? "good" : "bad"),
-      tile("Profit days", s.profit_days, `vs ${s.loss_days} loss days`, "good"),
-      tile("Avg / day (net)", signed(netAvg), `gross ${signed(s.avg_day)}/day`, netAvg >= 0 ? "good" : "bad"),
-      tile("Best day", s.best_day ? signed(s.best_day.realized) : "—", s.best_day ? s.best_day.date : "", "good"),
-      tile("Worst day", s.worst_day ? signed(s.worst_day.realized) : "—", s.worst_day ? s.worst_day.date : "", "bad"),
+      tile("Win rate", (s.win_rate || 0) + "%", `${s.wins}W / ${s.losses}L`, s.win_rate >= 50 ? "good" : "bad", s.win_rate || 0),
+      tile("Profit days", s.profit_days, `vs ${s.loss_days} loss days`, "good", dayPct),
+      tile("Avg / day (net)", signed(netAvg), `gross ${signed(s.avg_day)}/day`, netAvg >= 0 ? "good" : "bad", ret(netAvg)),
+      tile("Best day", s.best_day ? signed(s.best_day.realized) : "—", s.best_day ? s.best_day.date : "", "good", s.best_day ? ret(s.best_day.realized) : null),
+      tile("Worst day", s.worst_day ? signed(s.worst_day.realized) : "—", s.worst_day ? s.worst_day.date : "", "bad", s.worst_day ? ret(s.worst_day.realized) : null),
       tile("Current streak", streakTxt, "", st.type === "profit" ? "good" : st.type === "loss" ? "bad" : "neutral"),
-      tile("Max drawdown", signed(maxDrawdown(s.daily || [])), "peak-to-trough", "bad"),
+      tile("Max drawdown", signed(dd), "peak-to-trough", "bad", ret(dd)),
     ].join("");
   }
 

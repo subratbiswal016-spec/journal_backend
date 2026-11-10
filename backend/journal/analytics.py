@@ -336,6 +336,7 @@ def summary(start: str | None = None, end: str | None = None) -> dict:
         "total_charges": total_charges,
         "costs_estimated": costs_estimated,
         "net_realized": net_realized,
+        "opening_capital": get_capital(),
         "trading_days": len(dated),
         "profit_days": len(profit_days),
         "loss_days": len(loss_days),

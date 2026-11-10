@@ -152,14 +152,16 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .tile.bad .value { color: var(--call); }
 .tile.neutral .value { color: var(--text); }
 
-/* Rounded accent bar at the bottom of each summary stat card */
-#journalTiles .tile { display: flex; flex-direction: column; }
-#journalTiles .tile::after { content: ""; display: block; height: 5px; border-radius: 20px;
-  margin-top: auto; background: var(--line); }
-#journalTiles .tile .value, #journalTiles .tile .label { flex: none; }
-#journalTiles .tile.good::after { background: linear-gradient(90deg, rgba(38,166,154,.30), #26a69a); }
-#journalTiles .tile.bad::after  { background: linear-gradient(90deg, rgba(239,83,80,.30), #ef5350); }
-#journalTiles .tile.neutral::after { background: linear-gradient(90deg, rgba(128,128,128,.22), rgba(128,128,128,.5)); }
+/* Circular % ring (return on capital / rate) in each summary card's corner */
+#journalTiles .tile { position: relative; }
+#journalTiles .tile .label, #journalTiles .tile .value { padding-right: 46px; }
+.tring { position: absolute; top: 10px; right: 10px; width: 44px; height: 44px; }
+.tring-bg { fill: none; stroke: var(--panel-2); stroke-width: 4; }
+.tring-fg { fill: none; stroke-width: 4; stroke-linecap: round; transition: stroke-dasharray .6s ease; }
+.tring-tx { font-size: 9.5px; font-weight: 800; }
+.tring.good .tring-fg { stroke: #26a69a; } .tring.good .tring-tx { fill: var(--put); }
+.tring.bad .tring-fg { stroke: #ef5350; } .tring.bad .tring-tx { fill: var(--call); }
+.tring.neutral .tring-fg { stroke: #9aa3b2; } .tring.neutral .tring-tx { fill: var(--muted); }
 .pill { font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 600; }
 .pill.Bullish { background: var(--put-dim); color: var(--put); }
 .pill.Bearish { background: var(--call-dim); color: var(--call); }
