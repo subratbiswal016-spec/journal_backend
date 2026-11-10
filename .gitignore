@@ -11,3 +11,4 @@ __pycache__/
 
 # Trade data (personal) — never publish
 .journal.db
+.claude/

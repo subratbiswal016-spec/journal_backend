@@ -303,6 +303,8 @@
     document.body.appendChild(a); a.click(); a.remove();
   });
 
+  $("saveDetailsBtn").addEventListener("click", saveAllDetails);
+
   // Pull today's executed trades straight from Fyers (no CSV needed).
   // isAuto = fired automatically on load → fail quietly if not logged in.
   async function fyersSyncNow(isAuto) {
@@ -357,24 +359,57 @@
           <option value="">—</option>
           <option value="1" ${on === 1 ? "selected" : ""}>✓ On plan</option>
           <option value="0" ${on === 0 ? "selected" : ""}>✗ Off plan</option>
-        </select></td></tr>`;
+        </select></td>
+        <td><input class="notein" data-id="${t.id}" value="${esc(tag.note || "")}" placeholder="note…" /></td></tr>`;
     }).join("");
   }
   function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
 
-  // Save a tag when its Setup field or Plan dropdown changes (event delegation).
+  // Collect one row's current details (setup + plan + note) into a tag payload.
+  function rowTag(row) {
+    const setup = (row.querySelector(".setupin") || {}).value || "";
+    const note = (row.querySelector(".notein") || {}).value || "";
+    const plan = (row.querySelector(".planin") || {}).value;
+    const id = (row.querySelector("[data-id]") || {}).dataset?.id;
+    return { id, setup, note: note,
+      on_plan: plan === "1" ? 1 : plan === "0" ? 0 : null };
+  }
+  function saveTag(payload) {
+    return fetch("/api/journal/trades/tag", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  // Auto-save a row the moment its Setup / Plan / Note changes (safety net), so
+  // nothing is lost even if the user forgets the Save button. (event delegation)
   $("tradesTable").addEventListener("change", (e) => {
     const el = e.target;
     if (!el.dataset || !el.dataset.id) return;
-    const row = el.closest("tr");
-    const setup = (row.querySelector(".setupin") || {}).value || "";
-    const plan = (row.querySelector(".planin") || {}).value;
-    fetch("/api/journal/trades/tag", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: el.dataset.id, setup,
-        on_plan: plan === "1" ? 1 : plan === "0" ? 0 : null }),
-    }).catch(() => {});
+    saveTag(rowTag(el.closest("tr"))).catch(() => {});
   });
+
+  // Explicit "Save details" button: writes every row's setup/plan/note at once
+  // and confirms, so the user knows their journal notes are stored and will be
+  // there next time they open the app.
+  async function saveAllDetails() {
+    const rows = [...$("tradesTable").querySelectorAll("tbody tr")];
+    const payloads = rows.map(rowTag).filter((p) => p.id);
+    if (!payloads.length) { status("No trades to save details for yet.", true); return; }
+    const btn = $("saveDetailsBtn");
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = "Saving…";
+    try {
+      const res = await Promise.allSettled(payloads.map(saveTag));
+      const ok = res.filter((r) => r.status === "fulfilled" && r.value.ok).length;
+      if (ok === payloads.length) {
+        status(`✓ Saved details for ${ok} trade${ok === 1 ? "" : "s"}. They'll be here next time you open the app.`);
+      } else {
+        status(`Saved ${ok} of ${payloads.length} — some failed, please try again.`, ok === 0);
+      }
+    } catch { status("Could not save — check your connection and try again.", true); }
+    finally { btn.disabled = false; btn.textContent = label; }
+  }
 
   // ---------------------------------------------------------------- actions
   function status(msg, err) {
