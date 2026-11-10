@@ -462,14 +462,15 @@
   // fills by |pct| capped at 100%, the centre shows the real value.
   function ring(pct, cls) {
     if (pct == null || isNaN(pct)) return "";
-    const R = 15, C = 2 * Math.PI * R;
+    const R = 16, C = 2 * Math.PI * R;
     const frac = Math.max(0, Math.min(1, Math.abs(pct) / 100));
-    const shown = Math.abs(pct) >= 100 ? Math.round(pct) : (Math.round(pct * 10) / 10);
-    return `<svg class="tring ${cls || "neutral"}" viewBox="0 0 40 40">` +
-      `<circle class="tring-bg" cx="20" cy="20" r="${R}"/>` +
-      `<circle class="tring-fg" cx="20" cy="20" r="${R}" transform="rotate(-90 20 20)" ` +
-      `stroke-dasharray="${(frac * C).toFixed(1)} ${((1 - frac) * C).toFixed(1)}"/>` +
-      `<text class="tring-tx" x="20" y="20" dominant-baseline="central" text-anchor="middle">${shown}%</text></svg>`;
+    const off = ((1 - frac) * C).toFixed(1);
+    const shown = Math.round(pct);                       // whole number, cleaner
+    return `<svg class="tring ${cls || "neutral"}" viewBox="0 0 44 44">` +
+      `<circle class="tring-bg" cx="22" cy="22" r="${R}"/>` +
+      `<circle class="tring-fg" cx="22" cy="22" r="${R}" transform="rotate(-90 22 22)" ` +
+      `style="--c:${C.toFixed(1)};--off:${off}"/>` +
+      `<text class="tring-tx" x="22" y="22" dominant-baseline="central" text-anchor="middle">${shown}<tspan class="tring-pc">%</tspan></text></svg>`;
   }
   function tile(label, val, sub, cls, pct, ringCls) {
     return `<div class="tile ${cls || "neutral"}">${ring(pct, ringCls || cls)}` +
