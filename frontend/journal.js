@@ -470,6 +470,8 @@
     $("journalTiles").innerHTML = [
       tile("Net P&L", signed(net), s.total_costs ? `after ${s.costs_estimated ? "~" : ""}${inr(s.total_costs)} ${s.costs_estimated ? "est. costs" : "brokerage + charges"}` : "no costs yet", net >= 0 ? "good" : "bad"),
       tile("Gross P&L", signed(s.total_realized), `${s.trading_days} trading days · before costs`, s.total_realized >= 0 ? "good" : "bad"),
+      tile("Brokerage", inr(s.total_brokerage || 0), s.costs_estimated ? "estimated" : "from broker", "neutral"),
+      tile("Charges", inr(s.total_charges || 0), "STT · GST · exchange", "neutral"),
       tile("Win rate", (s.win_rate || 0) + "%", `${s.wins}W / ${s.losses}L`, s.win_rate >= 50 ? "good" : "bad"),
       tile("Profit days", s.profit_days, `vs ${s.loss_days} loss days`, "good"),
       tile("Avg / day (net)", signed(netAvg), `gross ${signed(s.avg_day)}/day`, netAvg >= 0 ? "good" : "bad"),

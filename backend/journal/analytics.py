@@ -323,13 +323,17 @@ def summary(start: str | None = None, end: str | None = None) -> dict:
     # Net P&L = gross − brokerage/charges (exact if entered, else auto-estimated).
     months_in_range = sorted({d["date"][:7] for d in dated if len(d["date"]) >= 7})
     _resolved = [month_costs_resolved(m) for m in months_in_range]
-    total_costs = round(sum(c["brokerage"] + c["charges"] for c in _resolved), 2)
+    total_brokerage = round(sum(c["brokerage"] for c in _resolved), 2)
+    total_charges = round(sum(c["charges"] for c in _resolved), 2)
+    total_costs = round(total_brokerage + total_charges, 2)
     costs_estimated = any(c.get("estimated") for c in _resolved)
     net_realized = round(total - total_costs, 2)
 
     return {
         "total_realized": total,
         "total_costs": total_costs,
+        "total_brokerage": total_brokerage,
+        "total_charges": total_charges,
         "costs_estimated": costs_estimated,
         "net_realized": net_realized,
         "trading_days": len(dated),
