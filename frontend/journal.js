@@ -158,8 +158,16 @@
     const inp = $("openingCapital");
     if (inp && document.activeElement !== inp) inp.value = c.opening || "";
     const bk = $("capBrokerage"), ch = $("capCharges");
-    if (bk && document.activeElement !== bk) bk.value = c.brokerage || "";
-    if (ch && document.activeElement !== ch) ch.value = c.charges || "";
+    // When costs are only estimated (not saved), leave inputs blank and show the
+    // estimate as the placeholder; when saved, fill the exact values in.
+    if (bk && document.activeElement !== bk) {
+      bk.value = c.costs_estimated ? "" : (c.brokerage || "");
+      bk.placeholder = c.costs_estimated && c.brokerage ? "est. " + Math.round(c.brokerage) : "e.g. 3600";
+    }
+    if (ch && document.activeElement !== ch) {
+      ch.value = c.costs_estimated ? "" : (c.charges || "");
+      ch.placeholder = c.costs_estimated && c.charges ? "est. " + Math.round(c.charges) : "e.g. 3342";
+    }
     drawCapitalTiles(c);
     const td = c.trade_days || [];
     $("capJournalSub").textContent = td.length
@@ -176,10 +184,12 @@
   }
   function drawCapitalTiles(c) {
     const net = c.net_pnl != null ? c.net_pnl : c.total_pnl;
+    const est = c.costs_estimated;
+    const costNote = c.total_cost
+      ? `gross ${signed(c.gross_pnl)} − ${est ? "est. " : ""}costs ${inr(c.total_cost)}` : "";
     $("capitalTiles").innerHTML =
       capTile("Opening capital", inr(c.opening)) +
-      capTile("Net P&L this month", signed(net), net >= 0 ? "pos" : "neg",
-        c.total_cost ? `gross ${signed(c.gross_pnl)} − costs ${inr(c.total_cost)}` : "") +
+      capTile("Net P&L this month", signed(net), net >= 0 ? "pos" : "neg", costNote) +
       capTile("Closing capital", inr(c.closing));
     // breakdown line (matches the broker's monthly summary)
     const bd = $("capitalBreakdown");
@@ -190,7 +200,8 @@
           `Gross P&L <b class="${c.gross_pnl >= 0 ? "pos" : "neg"}">${signed(c.gross_pnl)}</b>` +
           ` − Brokerage <b class="neg">${inr(c.brokerage)}</b>` +
           ` − Charges <b class="neg">${inr(c.charges)}</b>` +
-          ` = Net <b class="${net >= 0 ? "pos" : "neg"}">${signed(net)}</b>`;
+          ` = Net <b class="${net >= 0 ? "pos" : "neg"}">${signed(net)}</b>` +
+          (est ? ` <span class="cap-est">estimated — enter your broker's figures above for the exact net</span>` : "");
       } else {
         bd.classList.add("hidden");
         bd.innerHTML = "";
@@ -270,22 +281,32 @@
   function capLiveRecompute() {
     if (!capData) return;
     const opening = Number($("openingCapital").value) || 0;
-    const brokerage = Number($("capBrokerage").value) || 0;
-    const charges = Number($("capCharges").value) || 0;
+    const bkRaw = $("capBrokerage").value, chRaw = $("capCharges").value;
+    const typed = bkRaw !== "" || chRaw !== "";
     const gross = capData.gross_pnl != null ? capData.gross_pnl : (capData.total_pnl || 0);
+    // typed → exact override; blank → the backend figure (estimate when unsaved)
+    const brokerage = typed ? (Number(bkRaw) || 0) : (capData.brokerage || 0);
+    const charges = typed ? (Number(chRaw) || 0) : (capData.charges || 0);
+    const estimated = typed ? false : capData.costs_estimated;
     const total_cost = brokerage + charges;
     const net = gross - total_cost;
-    drawCapitalTiles({ opening, gross_pnl: gross, brokerage, charges,
-      total_cost, net_pnl: net, total_pnl: net, closing: opening + net,
-      return_pct: opening ? (net / opening * 100) : 0 });
+    drawCapitalTiles({ opening, gross_pnl: gross, brokerage, charges, total_cost,
+      net_pnl: net, total_pnl: net, costs_estimated: estimated,
+      closing: opening + net, return_pct: opening ? (net / opening * 100) : 0 });
+  }
+  function capCostBody() {
+    const body = { opening: Number($("openingCapital").value) || 0, month: capMonth };
+    const bkRaw = $("capBrokerage").value, chRaw = $("capCharges").value;
+    if (bkRaw !== "" || chRaw !== "") {      // only override when actually entered
+      body.brokerage = Number(bkRaw) || 0;
+      body.charges = Number(chRaw) || 0;
+    }
+    return body;
   }
   function capPersist() {
     fetch("/api/journal/capital", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        opening: Number($("openingCapital").value) || 0,
-        brokerage: Number($("capBrokerage").value) || 0,
-        charges: Number($("capCharges").value) || 0, month: capMonth }),
+      body: JSON.stringify(capCostBody()),
     }).then((r) => r.json()).then(renderCapital).catch(() => {});
   }
   ["openingCapital", "capBrokerage", "capCharges"].forEach((id) => {
@@ -329,12 +350,9 @@
     btn.disabled = true; btn.textContent = "Saving…";
     capSaveMsg("");
     try {
-      const v = Number($("openingCapital").value) || 0;
-      const brokerage = Number($("capBrokerage").value) || 0;
-      const charges = Number($("capCharges").value) || 0;
       const r = await fetch("/api/journal/capital", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ opening: v, month: capMonth, brokerage, charges }),
+        body: JSON.stringify(capCostBody()),
       });
       if (!r.ok) throw new Error("capital save failed");
       const fresh = await r.json();
@@ -444,7 +462,7 @@
     const net = s.net_realized != null ? s.net_realized : s.total_realized;
     $("journalTiles").innerHTML = [
       tile("Gross P&L", signed(s.total_realized), `${s.trading_days} trading days · before costs`, s.total_realized >= 0 ? "good" : "bad"),
-      tile("Net P&L", signed(net), s.total_costs ? `after ${inr(s.total_costs)} brokerage + charges` : "set costs on Capital tab", net >= 0 ? "good" : "bad"),
+      tile("Net P&L", signed(net), s.total_costs ? `after ${s.costs_estimated ? "~" : ""}${inr(s.total_costs)} ${s.costs_estimated ? "est. costs" : "brokerage + charges"}` : "no costs yet", net >= 0 ? "good" : "bad"),
       tile("Win rate", (s.win_rate || 0) + "%", `${s.wins}W / ${s.losses}L`, s.win_rate >= 50 ? "good" : "bad"),
       tile("Profit days", s.profit_days, `vs ${s.loss_days} loss days`, "good"),
       tile("Avg / day", signed(s.avg_day), "", s.avg_day >= 0 ? "good" : "bad"),

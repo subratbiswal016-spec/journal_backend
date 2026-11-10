@@ -332,6 +332,8 @@ footer {
 .cap-cost-field input:focus { outline: none; border-color: var(--accent); }
 .cap-breakdown { font-size: 13px; color: var(--muted); margin: 12px 0 0; }
 .cap-breakdown b.pos { color: var(--put); } .cap-breakdown b.neg { color: var(--call); }
+.cap-est { display: inline-block; margin-left: 8px; font-size: 11px; color: var(--warn);
+  background: rgba(240,180,41,.12); padding: 1px 8px; border-radius: 10px; }
 .cap-sync { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 16px; }
 .cap-sync .jnote { margin: 0; }
 .cap-subval { font-size: 12px; color: var(--muted); margin-top: 2px; }

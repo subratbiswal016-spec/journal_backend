@@ -96,6 +96,47 @@ def set_month_costs(month: str, brokerage, charges) -> None:
     store.set_setting("monthly_costs", allc)
 
 
+# Approx NSE options charges for a discount broker (₹20/order). Rates shift with
+# the Budget; this is a 2024-25 estimate so Net P&L shows automatically. Enter
+# the broker's exact Brokerage/Charges for a month to override the estimate.
+_BROKERAGE_PER_ORDER = 20.0
+
+
+def estimate_month_charges(month: str) -> dict:
+    y, mo = int(month[:4]), int(month[5:7])
+    last = calendar.monthrange(y, mo)[1]
+    trades = [t for t in store.trades_between(f"{y}-{mo:02d}-01", f"{y}-{mo:02d}-{last:02d}")
+              if t.get("closed")]
+    brokerage = stt = txn = stamp = sebi = 0.0
+    for t in trades:
+        value = float(t.get("value") or 0)          # exit-leg premium value
+        pnl = float(t.get("pnl") or 0)
+        side = (t.get("side") or "").upper()
+        if side in ("LONG", "BUY"):                 # bought then sold
+            buy_v, sell_v = max(0.0, value - pnl), value
+        else:                                       # SHORT: sold then bought
+            buy_v, sell_v = value, max(0.0, value + pnl)
+        turnover = buy_v + sell_v
+        brokerage += 2 * _BROKERAGE_PER_ORDER       # one buy + one sell order
+        stt += 0.001 * sell_v                       # 0.1% on options sell premium
+        txn += 0.0003503 * turnover                 # NSE options exchange txn charge
+        sebi += 0.000001 * turnover                 # ₹10 / crore
+        stamp += 0.00003 * buy_v                    # 0.003% on buy
+    gst = 0.18 * (brokerage + txn + sebi)
+    charges = round(stt + txn + sebi + stamp + gst, 2)
+    return {"brokerage": round(brokerage, 2), "charges": charges, "estimated": True}
+
+
+def month_costs_resolved(month: str) -> dict:
+    """Exact costs the user saved for the month, else an auto-estimate."""
+    allc = store.get_setting("monthly_costs", {}) or {}
+    if month in allc:
+        c = allc[month] or {}
+        return {"brokerage": float(c.get("brokerage") or 0),
+                "charges": float(c.get("charges") or 0), "estimated": False}
+    return estimate_month_charges(month)
+
+
 def capital_summary() -> dict:
     """Opening capital + all-time realized P&L -> closing capital and return %."""
     opening = get_capital()
@@ -165,7 +206,7 @@ def capital_tracker(month: str | None = None) -> dict:
 
     month_key = f"{year}-{mon:02d}"
     gross_pnl = round(cumulative, 2)
-    costs = get_month_costs(month_key)
+    costs = month_costs_resolved(month_key)
     brokerage, charges = costs["brokerage"], costs["charges"]
     total_cost = round(brokerage + charges, 2)
     net_pnl = round(gross_pnl - total_cost, 2)        # matches broker's Net P&L
@@ -177,6 +218,7 @@ def capital_tracker(month: str | None = None) -> dict:
         "opening": opening,
         "gross_pnl": gross_pnl, "brokerage": brokerage, "charges": charges,
         "total_cost": total_cost, "net_pnl": net_pnl,
+        "costs_estimated": costs.get("estimated", False),
         "total_pnl": net_pnl,                         # headline P&L is net
         "closing": closing, "return_pct": return_pct, "days": days,
         "trade_days": [d for d in days if d["traded"]],
@@ -262,15 +304,17 @@ def summary(start: str | None = None, end: str | None = None) -> dict:
     best = max(dated, key=lambda d: float(d["realized"] or 0), default=None)
     worst = min(dated, key=lambda d: float(d["realized"] or 0), default=None)
 
-    # Net P&L = gross − the brokerage/charges entered for the months in range.
+    # Net P&L = gross − brokerage/charges (exact if entered, else auto-estimated).
     months_in_range = sorted({d["date"][:7] for d in dated if len(d["date"]) >= 7})
-    total_costs = round(sum(get_month_costs(m)["brokerage"] + get_month_costs(m)["charges"]
-                            for m in months_in_range), 2)
+    _resolved = [month_costs_resolved(m) for m in months_in_range]
+    total_costs = round(sum(c["brokerage"] + c["charges"] for c in _resolved), 2)
+    costs_estimated = any(c.get("estimated") for c in _resolved)
     net_realized = round(total - total_costs, 2)
 
     return {
         "total_realized": total,
         "total_costs": total_costs,
+        "costs_estimated": costs_estimated,
         "net_realized": net_realized,
         "trading_days": len(dated),
         "profit_days": len(profit_days),
