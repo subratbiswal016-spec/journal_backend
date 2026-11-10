@@ -136,6 +136,10 @@
     const idx = months.indexOf(c.month);
     $("capPrev").disabled = idx <= 0;
     $("capNext").disabled = idx < 0 || idx >= months.length - 1;
+    // sync buttons: Fyers only when on the Fyers source; Dhan label by connection
+    $("capFyersSync").style.display = c.can_sync ? "" : "none";
+    $("capDhanSync").textContent = c.dhan_connected
+      ? "⬇ Sync this month (Dhan)" : "🔑 Connect Dhan";
     const inp = $("openingCapital");
     if (inp && document.activeElement !== inp) inp.value = c.opening || "";
     drawCapitalTiles(c);
@@ -264,6 +268,73 @@
   }
   if ($("capPrev")) $("capPrev").addEventListener("click", () => capShiftMonth(-1));
   if ($("capNext")) $("capNext").addEventListener("click", () => capShiftMonth(1));
+
+  function capSyncMsg(msg, err) {
+    const s = $("capSyncMsg");
+    if (!s) return;
+    if (!msg) { s.classList.add("hidden"); return; }
+    s.className = "jnote" + (err ? " err" : "");
+    s.innerHTML = msg;
+    s.classList.remove("hidden");
+  }
+  // Compute the viewed month's [start, end], capping end at today (no future dates).
+  function capMonthRange() {
+    const [y, m] = capMonth.split("-").map(Number);
+    const last = new Date(y, m, 0).getDate();
+    let end = `${capMonth}-${String(last).padStart(2, "0")}`;
+    const today = todayISO();
+    if (end > today) end = today;
+    return { start: `${capMonth}-01`, end };
+  }
+  // Pull the whole viewed month from Dhan (clears only that month, re-inserts).
+  async function capDhanSyncMonth() {
+    if (!capData || !capData.dhan_connected) {   // not connected → connect modal
+      if ($("dhanFrom")) $("dhanFrom").value = `${capMonth}-01`;
+      if ($("dhanTo")) $("dhanTo").value = capMonthRange().end;
+      openDhanModal();
+      return;
+    }
+    const { start, end } = capMonthRange();
+    const btn = $("capDhanSync"), old = btn.textContent;
+    btn.disabled = true; btn.textContent = "Syncing…";
+    capSyncMsg(`Pulling ${capData.month_label} trades from Dhan…`);
+    try {
+      const r = await fetch("/api/journal/dhan/sync", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ from: start, to: end }),
+      });
+      const d = await r.json();
+      if (!r.ok) {
+        if (r.status === 401) { capSyncMsg("Dhan token expired — reconnect from the Journal tab.", true); return; }
+        throw new Error(d.detail || "sync failed");
+      }
+      capSyncMsg(`✅ Synced ${d.round_trips} round-trips from ${d.raw_trades} Dhan trades · ${signed(d.realized)}` +
+        (d.note ? ` — ${d.note}` : ""));
+      loadCapital();
+    } catch (e) {
+      capSyncMsg("Dhan sync failed: " + e.message, true);
+    } finally { btn.disabled = false; btn.textContent = old; }
+  }
+  // Fyers tradebook is today-only, so this syncs today's fills (not a month).
+  async function capFyersSyncToday() {
+    const btn = $("capFyersSync"), old = btn.textContent;
+    btn.disabled = true; btn.textContent = "Syncing…";
+    capSyncMsg("Pulling today's trades from Fyers…");
+    try {
+      const r = await fetch("/api/journal/sync", { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) {
+        if (r.status === 401) { capSyncMsg("Log in to Fyers on the Dashboard tab first.", true); return; }
+        throw new Error(d.detail || "sync failed");
+      }
+      capSyncMsg(`✅ Synced ${d.round_trips} round-trips from Fyers today · ${signed(d.realized_today || 0)}`);
+      loadCapital();
+    } catch (e) {
+      capSyncMsg("Fyers sync failed: " + e.message, true);
+    } finally { btn.disabled = false; btn.textContent = old; }
+  }
+  if ($("capDhanSync")) $("capDhanSync").addEventListener("click", capDhanSyncMonth);
+  if ($("capFyersSync")) $("capFyersSync").addEventListener("click", capFyersSyncToday);
 
   function targetCard(name, t) {
     return `<div class="tlabel">${name} Target</div>

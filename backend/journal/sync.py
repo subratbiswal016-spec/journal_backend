@@ -116,7 +116,8 @@ def sync_dhan(from_date: str, to_date: str) -> dict:
                 "note": "No trades returned for this range — your existing data was kept. "
                         "If you expected trades, your Dhan token may have expired; reconnect."}
 
-    store.clear_source("dhan")
+    # Clear only the synced date range so syncing one month doesn't wipe others.
+    store.clear_source_range("dhan", from_date, to_date)
     store.upsert_trades([{k: t.get(k) for k in
         ("id", "date", "time", "symbol", "side", "qty", "price", "value", "pnl", "closed", "source")}
         for t in closed])

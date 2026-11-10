@@ -361,7 +361,10 @@ async def journal_set_targets(request: Request):
 
 @app.get("/api/journal/capital-tracker")
 def journal_capital_tracker(month: Optional[str] = Query(None)):
-    return janalytics.capital_tracker(month)
+    data = janalytics.capital_tracker(month)
+    data["can_sync"] = _source.name == "fyers"      # Fyers = today-only sync
+    data["dhan_connected"] = jdhan.is_connected()
+    return data
 
 
 @app.post("/api/journal/capital")

@@ -192,4 +192,12 @@ def clear_source_date(source: str, date: str) -> None:
         c.execute("DELETE FROM trades WHERE source = ? AND date = ?", (source, date))
 
 
+def clear_source_range(source: str, start: str, end: str) -> None:
+    """Remove a source's trades within [start, end] (e.g. re-syncing one month).
+    Leaves 'unknown'-dated rows and other date ranges untouched."""
+    with _lock, _conn() as c:
+        c.execute("DELETE FROM trades WHERE source = ? AND date != 'unknown' "
+                  "AND date >= ? AND date <= ?", (source, start, end))
+
+
 init()
