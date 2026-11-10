@@ -29,6 +29,7 @@
 .light .topbar { background: linear-gradient(180deg, #ffffff, #eef1f5); }
 .light .statusbar { background: #fff6e5; color: #9a6a00; border-bottom-color: #f0dca8; }
 .light .statusbar.error { background: #fdeaea; color: #c0392b; border-bottom-color: #f3c0c0; }
+.light .statusbar.info { background: #eaf1fb; color: #2b4c86; border-bottom-color: #cfe0ff; }
 .light .jnote { background: #eef4ff; border-color: #cfe0ff; color: #2b4c86; }
 .light .jnote.err { background: #fdeaea; border-color: #f3c0c0; color: #c0392b; }
 .light .jnote b { color: #16335f; }
@@ -92,6 +93,7 @@ body {
 /* ---------- status ---------- */
 .statusbar { padding: 8px 18px; font-size: 13px; background: #3a2a1a; color: var(--warn); border-bottom: 1px solid #5a4420; }
 .statusbar.error { background: #3a1d1d; color: #ff8a80; border-color: #5a2424; }
+.statusbar.info { background: #122338; color: #8fb8ef; border-color: #1d3b5c; }
 .hidden { display: none !important; }
 
 main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max-width: 1400px; margin: 0 auto; }

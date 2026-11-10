@@ -6,9 +6,44 @@ const fmt = (n, d = 0) =>
 const fmtSigned = (n) => (n > 0 ? "+" : "") + fmt(n);
 
 let CFG = { symbols: ["NIFTY"], refresh_seconds: 30, source: "nse" };
-let state = { symbol: "NIFTY", expiry: "", countdown: 30, timer: null, loading: false };
+let state = { symbol: "NIFTY", expiry: "", countdown: 30, timer: null, loading: false,
+              marketClosed: false };
 let chgChart = null;
 let oiChart = null;
+
+// ---------------------------------------------------------- market hours
+// NSE/BSE equity hours: Mon–Fri 09:15–15:30 IST, minus exchange holidays.
+// Outside these, prices don't change, so we pause auto-refresh to save calls.
+const MARKET_OPEN_MIN = 9 * 60 + 15;    // 09:15 IST
+const MARKET_CLOSE_MIN = 15 * 60 + 30;  // 15:30 IST
+// NSE weekday trading holidays (full-day closures). Update yearly from
+// https://www.nseindia.com/resources/exchange-communication-holidays .
+// Weekends are handled automatically, so only weekday holidays are listed.
+const NSE_HOLIDAYS = new Set([
+  // 2026
+  "2026-01-26", "2026-03-03", "2026-03-26", "2026-03-31", "2026-04-03",
+  "2026-04-14", "2026-05-01", "2026-05-28", "2026-06-26", "2026-09-14",
+  "2026-10-02", "2026-10-20", "2026-11-10", "2026-11-24", "2026-12-25",
+]);
+// Read the wall clock in IST regardless of the viewer's own timezone.
+const _IST_FMT = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Asia/Kolkata", weekday: "short", year: "numeric", month: "2-digit",
+  day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+});
+function marketStatus(now = new Date()) {
+  const p = Object.fromEntries(_IST_FMT.formatToParts(now).map((x) => [x.type, x.value]));
+  const date = `${p.year}-${p.month}-${p.day}`;
+  const mins = (+p.hour) * 60 + (+p.minute);
+  if (p.weekday === "Sat" || p.weekday === "Sun") return { open: false, reason: "Weekend" };
+  if (NSE_HOLIDAYS.has(date)) return { open: false, reason: "Exchange holiday" };
+  if (mins < MARKET_OPEN_MIN) return { open: false, reason: "Pre-market" };
+  if (mins >= MARKET_CLOSE_MIN) return { open: false, reason: "After hours" };
+  return { open: true, reason: "Market open" };
+}
+function countdownLabel() {
+  if (!marketStatus().open) return "paused";
+  return $("autoRefresh").checked ? Math.max(0, state.countdown) + "s" : "off";
+}
 
 // ---------------------------------------------------------------- bootstrap
 async function init() {
@@ -95,15 +130,18 @@ async function load(force = false) {
     const data = await res.json();
     hideLogin();
     render(data);
-    showStatus(data.stale_error
-      ? `Showing cached data — last refresh failed: ${data.stale_error}` : "", "error");
+    // Keep the "market closed" note up while closed; only show stale/error here.
+    if (marketStatus().open || data.stale_error) {
+      showStatus(data.stale_error
+        ? `Showing cached data — last refresh failed: ${data.stale_error}` : "", "error");
+    }
   } catch (e) {
     showStatus(`Could not load data: ${e.message}. NSE may be throttling — retrying on next cycle.`, "error");
   } finally {
     state.loading = false;
     state.countdown = CFG.refresh_seconds;
     $("refreshBtn").classList.remove("busy");
-    $("refreshBtn").innerHTML = `⟳ <span id="countdown">${CFG.refresh_seconds}</span>s`;
+    $("refreshBtn").innerHTML = `⟳ <span id="countdown">${countdownLabel()}</span>`;
   }
 }
 
@@ -256,15 +294,37 @@ function renderCharts(d, s) {
 function startTick() {
   resetTick();
   state.timer = setInterval(() => {
+    const mkt = marketStatus();
+    if (!mkt.open) {                       // market closed → pause polling
+      if (!state.marketClosed) { state.marketClosed = true; showClosed(mkt); }
+      return;
+    }
+    if (state.marketClosed) {              // market just reopened → refresh now
+      state.marketClosed = false;
+      showStatus("", "");
+      resetTick();
+      load(false);
+      return;
+    }
     if (!$("autoRefresh").checked) { $("countdown").textContent = "off"; return; }
     state.countdown -= 1;
     if (state.countdown <= 0) { load(false); }
-    $("countdown").textContent = Math.max(0, state.countdown);
+    $("countdown").textContent = Math.max(0, state.countdown) + "s";
   }, 1000);
 }
 function resetTick() {
   state.countdown = CFG.refresh_seconds;
-  $("countdown").textContent = $("autoRefresh").checked ? state.countdown : "off";
+  $("countdown").textContent = countdownLabel();
+}
+function showClosed(mkt) {
+  $("countdown").textContent = "paused";
+  const detail = {
+    "Weekend": "Market closed (weekend)",
+    "Exchange holiday": "Market closed (exchange holiday)",
+    "Pre-market": "Pre-market — NSE opens 9:15 AM IST",
+    "After hours": "Market closed for the day (after 3:30 PM IST)",
+  }[mkt.reason] || "Market closed";
+  showStatus(detail + " — auto-refresh paused. Press ⟳ to refresh manually.", "info");
 }
 
 function showStatus(msg, cls) {
