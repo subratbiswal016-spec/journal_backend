@@ -648,6 +648,40 @@
 
   $("saveDetailsBtn").addEventListener("click", saveAllDetails);
 
+  // ---- Clear journal data (by source or all) ----
+  if ($("clearBtn")) $("clearBtn").addEventListener("click", () => {
+    $("clearStatus").classList.add("hidden");
+    $("clearModal").classList.remove("hidden");
+  });
+  if ($("clearCloseBtn")) $("clearCloseBtn").addEventListener("click", () =>
+    $("clearModal").classList.add("hidden"));
+  if ($("clearModal")) $("clearModal").addEventListener("click", async (e) => {
+    const btn = e.target.closest("[data-clear]");
+    if (!btn) return;
+    const src = btn.dataset.clear;
+    const label = src === "all" ? "ALL trades from every source" : `all ${src.toUpperCase()} trades`;
+    if (!confirm(`Delete ${label}? This can't be undone.`)) return;
+    btn.disabled = true;
+    try {
+      const r = await fetch("/api/journal/clear", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source: src }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || "clear failed");
+      const s = $("clearStatus");
+      s.className = "jnote";
+      s.textContent = `✓ Cleared ${label}.`;
+      s.classList.remove("hidden");
+      await loadJournal();
+      setTimeout(() => $("clearModal").classList.add("hidden"), 900);
+    } catch (err) {
+      const s = $("clearStatus");
+      s.className = "jnote err";
+      s.textContent = "Could not clear: " + err.message;
+      s.classList.remove("hidden");
+    } finally { btn.disabled = false; }
+  });
+
   // Pull today's executed trades straight from Fyers (no CSV needed).
   // isAuto = fired automatically on load → fail quietly if not logged in.
   async function fyersSyncNow(isAuto) {

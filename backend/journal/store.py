@@ -206,6 +206,12 @@ def clear_source_range(source: str, start: str, end: str) -> None:
                   "AND date >= ? AND date <= ?", (source, start, end))
 
 
+def clear_all_trades() -> None:
+    """Remove every trade (used by the Clear data action)."""
+    with _lock, _conn() as c:
+        c.execute("DELETE FROM trades")
+
+
 # --------------------------------------------------------------- backend swap
 # When MONGO_URL is set, replace the SQLite functions above with the MongoDB
 # backend. Done here (rather than at import top) so the SQLite code — and its
@@ -218,12 +224,13 @@ if os.getenv("MONGO_URL"):
         (init, upsert_trades, trades_between, trades_on, recent_trades,
          set_daily, rebuild_daily_from_trades, daily_between, all_daily,
          get_setting, set_setting, set_tag, tags_map,
-         clear_source, clear_source_date, clear_source_range) = (
+         clear_source, clear_source_date, clear_source_range,
+         clear_all_trades) = (
             _m.init, _m.upsert_trades, _m.trades_between, _m.trades_on,
             _m.recent_trades, _m.set_daily, _m.rebuild_daily_from_trades,
             _m.daily_between, _m.all_daily, _m.get_setting, _m.set_setting,
             _m.set_tag, _m.tags_map, _m.clear_source, _m.clear_source_date,
-            _m.clear_source_range)
+            _m.clear_source_range, _m.clear_all_trades)
         BACKEND = "mongo"
     except Exception as e:  # noqa: BLE001 - never crash the app on DB wiring
         import sys

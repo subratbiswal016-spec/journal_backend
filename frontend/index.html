@@ -154,6 +154,7 @@
           <label class="jbtn importbtn">📁 Import CSV<input type="file" id="csvInput" accept=".csv" hidden></label>
           <button id="saveDetailsBtn" class="jbtn primary">💾 Save details</button>
           <button id="exportBtn" class="jbtn">⬇ Export CSV</button>
+          <button id="clearBtn" class="jbtn">🗑 Clear data</button>
           <button id="settingsBtn" class="jbtn">⚙ Rules &amp; Targets</button>
         </div>
       </div>
@@ -237,6 +238,24 @@
       <div class="modal-actions">
         <button id="dhanSaveSync" class="jbtn primary">Save &amp; Sync</button>
         <button id="dhanCloseBtn" class="jbtn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="clearModal" class="modal hidden">
+    <div class="modal-card">
+      <h2>🗑 Clear journal data</h2>
+      <p class="modal-sub">Delete trades from the journal. This <b>can't be undone</b>. Your opening capital,
+        costs, notes and rules are kept. Pick what to remove:</p>
+      <div id="clearStatus" class="jnote hidden"></div>
+      <div class="clear-opts">
+        <button class="jbtn" data-clear="fyers">Clear <b>Fyers</b> trades</button>
+        <button class="jbtn" data-clear="dhan">Clear <b>Dhan</b> trades</button>
+        <button class="jbtn" data-clear="csv">Clear <b>imported CSV</b> trades</button>
+        <button class="jbtn danger" data-clear="all">Clear <b>everything</b></button>
+      </div>
+      <div class="modal-actions">
+        <button id="clearCloseBtn" class="jbtn">Cancel</button>
       </div>
     </div>
   </div>

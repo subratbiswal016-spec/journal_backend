@@ -311,6 +311,21 @@ async def dhan_connect(request: Request):
     return {"connected": jdhan.is_connected()}
 
 
+@app.post("/api/journal/clear")
+async def journal_clear(request: Request):
+    """Delete trades from the journal, by source or all. Keeps settings/rules."""
+    data = await request.json()
+    src = (data.get("source") or "").strip().lower()
+    if src in ("all", "", "*"):
+        jstore.clear_all_trades()
+    elif src in ("dhan", "fyers", "csv", "upstox"):
+        jstore.clear_source(src)
+    else:
+        raise HTTPException(status_code=400, detail="unknown source")
+    jstore.rebuild_daily_from_trades()
+    return {"ok": True, "cleared": src or "all"}
+
+
 @app.post("/api/journal/dhan/sync")
 async def dhan_sync(request: Request):
     try:

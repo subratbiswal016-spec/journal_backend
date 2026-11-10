@@ -153,6 +153,10 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .tile.neutral .value { color: var(--text); }
 
 .pill { font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 600; }
+.clear-opts { display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
+.clear-opts .jbtn { justify-content: flex-start; text-align: left; }
+.jbtn.danger { border-color: rgba(239,83,80,.5); color: #ef5350; }
+.jbtn.danger:hover { background: rgba(239,83,80,.12); }
 .pill.Bullish { background: var(--put-dim); color: var(--put); }
 .pill.Bearish { background: var(--call-dim); color: var(--call); }
 .pill.Neutral { background: var(--panel-2); color: var(--muted); }

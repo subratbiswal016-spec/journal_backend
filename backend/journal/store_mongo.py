@@ -161,3 +161,7 @@ def clear_source_date(source: str, date: str) -> None:
 def clear_source_range(source: str, start: str, end: str) -> None:
     _coll("trades").delete_many(
         {"source": source, "date": {"$gte": start, "$lte": end, "$ne": "unknown"}})
+
+
+def clear_all_trades() -> None:
+    _coll("trades").delete_many({})
