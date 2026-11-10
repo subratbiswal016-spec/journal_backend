@@ -328,7 +328,10 @@ footer {
 .cap-sync .jnote { margin: 0; }
 .cap-subval { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .cap-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px;
-  color: var(--muted); max-width: 320px; margin-bottom: 14px; }
+  color: var(--muted); max-width: 440px; margin-bottom: 14px; }
+.cap-input-row { display: flex; gap: 10px; align-items: stretch; }
+.cap-input-row input { flex: 1; min-width: 0; }
+.cap-input-row #capSaveBtn { white-space: nowrap; padding: 0 18px; }
 .cap-field input { padding: 11px 12px; border-radius: 9px; border: 1px solid var(--line);
   background: var(--panel-2); color: var(--text); font-size: 18px; font-weight: 700; }
 .cap-field input:focus { outline: none; border-color: var(--accent); }

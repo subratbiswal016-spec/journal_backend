@@ -179,11 +179,14 @@
         </div>
       </div>
       <p class="cap-sub">Set your Day 1 capital once. As you sync trades, this month's P&amp;L updates it automatically.</p>
-      <label class="cap-field">Opening capital (Day 1)
-        <input type="number" id="openingCapital" min="0" step="1000" placeholder="e.g. 100000" />
-      </label>
+      <div class="cap-field">
+        <label for="openingCapital">Opening capital (Day 1)</label>
+        <div class="cap-input-row">
+          <input type="number" id="openingCapital" min="0" step="1000" placeholder="e.g. 100000" />
+          <button id="capSaveBtn" class="jbtn primary">💾 Save</button>
+        </div>
+      </div>
       <div class="cap-saverow">
-        <button id="capSaveBtn" class="jbtn primary">💾 Save</button>
         <span id="capSaveMsg" class="jnote hidden"></span>
       </div>
       <div class="cap-sync">
