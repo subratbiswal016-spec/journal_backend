@@ -20,6 +20,13 @@ services:
       # Protect the public URL — set a password in the Render dashboard.
       - key: JOURNAL_PASSWORD
         sync: false
+      # Persistent storage (recommended on free tier, whose disk resets on
+      # restart). Create a free MongoDB Atlas cluster and paste its connection
+      # string here; data then survives restarts. Leave unset to use SQLite.
+      - key: MONGO_URL
+        sync: false
+      - key: MONGO_DB
+        value: oi_journal
       # Fyers live data (fill in the Render dashboard when switching off mock).
       - key: FYERS_APP_ID
         sync: false

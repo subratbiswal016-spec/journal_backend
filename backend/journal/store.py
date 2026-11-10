@@ -1,4 +1,10 @@
-"""SQLite storage for the trading journal (no external dependencies)."""
+"""Journal storage.
+
+Defaults to a local SQLite file (no setup needed). If the MONGO_URL env var is
+set, the public functions are swapped for a MongoDB backend (store_mongo) so a
+hosted deploy can keep data in MongoDB Atlas and survive restarts. Optionally
+set MONGO_DB (defaults to 'oi_journal').
+"""
 from __future__ import annotations
 
 import json
@@ -199,5 +205,29 @@ def clear_source_range(source: str, start: str, end: str) -> None:
         c.execute("DELETE FROM trades WHERE source = ? AND date != 'unknown' "
                   "AND date >= ? AND date <= ?", (source, start, end))
 
+
+# --------------------------------------------------------------- backend swap
+# When MONGO_URL is set, replace the SQLite functions above with the MongoDB
+# backend. Done here (rather than at import top) so the SQLite code — and its
+# module-level _DB_PATH that the tests monkeypatch — stays intact for local use.
+BACKEND = "sqlite"
+if os.getenv("MONGO_URL"):
+    try:
+        from . import store_mongo as _m
+        _m.init()   # connect + build indexes now, so a bad URL fails here (caught)
+        (init, upsert_trades, trades_between, trades_on, recent_trades,
+         set_daily, rebuild_daily_from_trades, daily_between, all_daily,
+         get_setting, set_setting, set_tag, tags_map,
+         clear_source, clear_source_date, clear_source_range) = (
+            _m.init, _m.upsert_trades, _m.trades_between, _m.trades_on,
+            _m.recent_trades, _m.set_daily, _m.rebuild_daily_from_trades,
+            _m.daily_between, _m.all_daily, _m.get_setting, _m.set_setting,
+            _m.set_tag, _m.tags_map, _m.clear_source, _m.clear_source_date,
+            _m.clear_source_range)
+        BACKEND = "mongo"
+    except Exception as e:  # noqa: BLE001 - never crash the app on DB wiring
+        import sys
+        print(f"[store] MONGO_URL set but MongoDB backend failed ({e}); "
+              f"falling back to SQLite.", file=sys.stderr)
 
 init()

@@ -200,7 +200,8 @@ def api_snapshot(
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "source": _source.name}
+    return {"ok": True, "source": _source.name,
+            "store": getattr(jstore, "BACKEND", "sqlite")}
 
 
 # ----------------------------------------------------------------- journal
