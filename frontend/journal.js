@@ -7,6 +7,15 @@
   const inr = (n) => (n < 0 ? "-" : "") + "₹" + fmt(Math.abs(n));
   const signed = (n) => (n > 0 ? "+" : "") + inr(n);
 
+  // Global loading indicator — shown whenever a filter/date change refetches.
+  // A counter handles overlapping loads so it hides only when all are done.
+  let _loadingCount = 0;
+  function showLoading(on) {
+    _loadingCount = Math.max(0, _loadingCount + (on ? 1 : -1));
+    const el = $("loadingPill");
+    if (el) el.classList.toggle("hidden", _loadingCount === 0);
+  }
+
   let pnlChart = null;
   let lastOverview = null;
   let JDAILY = [];            // dated daily P&L series
@@ -63,6 +72,7 @@
 
   // ---------------------------------------------------------------- load
   async function loadJournal() {
+    showLoading(true);
     try {
       const d = await (await fetch("/api/journal/overview" + filterQuery())).json();
       lastOverview = d;
@@ -82,6 +92,8 @@
       if (d.can_sync && !fyersAutoSynced) fyersSyncNow(true);       // Fyers auto-sync once per load
     } catch (e) {
       status("Could not load journal: " + e.message, true);
+    } finally {
+      showLoading(false);
     }
   }
 
@@ -118,6 +130,7 @@
   let capitalChart = null;
 
   async function loadCapital() {
+    showLoading(true);
     try {
       const q = capMonth ? "?month=" + encodeURIComponent(capMonth) : "";
       capData = await (await fetch("/api/journal/capital-tracker" + q)).json();
@@ -125,6 +138,8 @@
       renderCapital(capData);
     } catch (e) {
       status("Could not load capital tracker: " + e.message, true);
+    } finally {
+      showLoading(false);
     }
   }
 
@@ -808,6 +823,7 @@
   $("saveSettings").addEventListener("click", saveRules);
 
   async function loadRules() {
+    showLoading(true);
     try {
       const [ov, an, plan] = await Promise.all([
         fetch("/api/journal/overview").then((r) => r.json()),
@@ -820,6 +836,7 @@
       renderRuleChart(an);
       renderGamePlan(plan);
     } catch (e) { rulesSaveMsg("Could not load rules: " + e.message, true); }
+    finally { showLoading(false); }
   }
 
   const planCharts = {};
@@ -1080,6 +1097,7 @@
   }
 
   async function loadInsights() {
+    showLoading(true);
     try {
       let url = `/api/journal/analytics?period=${insightsPeriod}&symbol=${encodeURIComponent(insightsSymbol)}`;
       const customRange = insStart && insEnd;
@@ -1108,6 +1126,7 @@
       renderDayList("topLoss", d.top_loss_days);
       renderSetup(d.setup);
     } catch (e) { $("insightSummary").textContent = "Could not load insights: " + e.message; }
+    finally { showLoading(false); }
   }
 
   // Plain-English, auto-generated insights from the backend.

@@ -135,6 +135,18 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
   font-size: 12.5px; font-weight: 800; color: #fff; font-style: normal; z-index: 2;
   text-shadow: 0 1px 3px rgba(0,0,0,.85); letter-spacing: .3px; }
 @keyframes flow { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* Global loading indicator (shown while a filter/date change refetches) */
+.loading-pill { position: fixed; top: 64px; left: 50%; transform: translateX(-50%);
+  z-index: 1200; display: inline-flex; align-items: center; gap: 8px;
+  background: var(--panel); border: 1px solid var(--line); color: var(--text);
+  padding: 8px 16px; border-radius: 22px; font-size: 13px; font-weight: 600;
+  box-shadow: 0 10px 30px -10px rgba(0,0,0,.55); }
+.loading-pill .spin { width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--accent);
+  animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .loading-pill .spin { animation-duration: 1.6s; } }
 @media (prefers-reduced-motion: reduce) { .tile .fillbar > span { animation: none; } }
 .tile.good .value { color: var(--put); }
 .tile.bad .value { color: var(--call); }
