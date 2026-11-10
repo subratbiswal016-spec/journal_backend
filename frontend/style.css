@@ -40,6 +40,7 @@
 /* red accent text on light-red backgrounds → darker red for contrast */
 .light .rulebanner.bad, .light .jstatus.err, .light .wk-badge.miss,
 .light .wd-tag.worst, .light .login-hint.err { color: #c0392b; }
+.light .wd-tag.ok { color: #9a6a00; }
 /* teal accent text on light-teal backgrounds → darker teal */
 .light .wk-badge.done, .light .wd-tag.best { color: #0f766e; }
 
@@ -287,6 +288,7 @@ footer {
 .wd-tag { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
   padding: 1px 6px; border-radius: 20px; }
 .wd-tag.best { background: rgba(38,166,154,.18); color: #2fd3c2; }
+.wd-tag.ok { background: rgba(240,180,41,.18); color: #f0b429; }
 .wd-tag.worst { background: rgba(239,83,80,.18); color: #ff7b78; }
 .wd-val { font-size: 20px; font-weight: 800; }
 .wd-val.pos { color: var(--put); } .wd-val.neg { color: var(--call); }

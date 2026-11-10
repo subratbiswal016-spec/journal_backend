@@ -602,7 +602,7 @@
 
   // Predefined setups for the Setup dropdown (edit to taste). Keeping a fixed
   // list means the "Setup Discipline" analytics group cleanly (no typos).
-  const SETUPS = ["Breakout", "Breakdown", "Reversal", "Trend", "VWAP",
+  const SETUPS = ["Breakout", "Breakdown", "Reversal", "Trend",
     "Gap up", "Gap down", "Range", "Scalp", "Momentum", "News/Event", "Other"];
   function setupOptions(current) {
     const opts = [""].concat(SETUPS);
@@ -1092,11 +1092,16 @@
       $("insightSummary").innerHTML =
         `<b>${d.days}</b> trading days · total <b>${signed(d.total)}</b>` + scopeTxt +
         (bw ? ` · best weekday <b style="color:var(--put)">${bw.day} (${signed(bw.pnl)})</b>` : "") +
-        (ww ? ` · worst weekday <b style="color:var(--call)">${ww.day} (${signed(ww.pnl)})</b>` : "");
+        // only call the low day "worst" when it's an actual loss; else it's just the weakest
+        (ww && ww !== bw
+          ? (ww.pnl < 0
+              ? ` · worst weekday <b style="color:var(--call)">${ww.day} (${signed(ww.pnl)})</b>`
+              : ` · weakest weekday <b style="color:var(--muted)">${ww.day} (${signed(ww.pnl)})</b>`)
+          : "");
       renderNarrative(d.narrative, d.days);
       renderWeekdayChart(d.weekday);
       renderWeekdayCallout(d.weekday);
-      renderWeekdayTable(d.weekday);
+      renderWeekdayTable(d.weekday, d.per_day_target);
       renderExpiry(d.expiry);
       renderInstruments(d.instruments);
       renderDayList("topProfit", d.top_profit_days);
@@ -1132,7 +1137,25 @@
 
   // Weekday cards (Mon–Fri), each with a horizontal flowing P&L bar, for the selection.
   const WD_ORDER = ["Mon", "Tue", "Wed", "Thu", "Fri"];
-  function renderWeekdayTable(wd) {
+  // Classify a weekday by its average P&L vs the per-day target (from Rules):
+  //   loss (avg < 0) → "bad", on-target (avg >= target) → "good",
+  //   profit-but-below-target → "ok". A profit is never flagged red/"worst".
+  function weekdayStatus(w, target) {
+    if (w.avg < 0) return "bad";
+    if (target > 0 && w.avg >= target) return "good";
+    return w.avg > 0 ? "ok" : "flat";
+  }
+  function weekdayBadge(status) {
+    return {
+      good: `<span class="wd-tag best">✓ On target</span>`,
+      ok: `<span class="wd-tag ok">Below target</span>`,
+      bad: `<span class="wd-tag worst">Loss</span>`,
+      flat: "",
+    }[status] || "";
+  }
+
+  function renderWeekdayTable(wd, perDayTarget) {
+    const target = Number(perDayTarget) || 0;
     const bw = $("weekdayBestWorst"), wrap = $("weekdayCards");
     if (!wrap) return;
     const byDay = {};
@@ -1146,20 +1169,28 @@
       return;
     }
     const best = traded.reduce((a, b) => (b.pnl > a.pnl ? b : a));
-    const worst = traded.reduce((a, b) => (b.pnl < a.pnl ? b : a));
+    const low = traded.reduce((a, b) => (b.pnl < a.pnl ? b : a));
+    const lowIsLoss = low.pnl < 0;           // only a real loss gets the red "Worst" card
     const maxAbs = Math.max(1, ...traded.map((w) => Math.abs(w.pnl)));
 
-    if (bw) bw.innerHTML = [
-      `<div class="wd-bw good"><div class="k">📈 Best day</div><div class="d">${WD_FULL[best.day] || best.day}</div>` +
-        `<div class="p pos"><b>${signed(best.pnl)}</b> over ${best.days} day${best.days === 1 ? "" : "s"} · ${best.win_rate}% win</div></div>`,
-      `<div class="wd-bw bad"><div class="k">📉 Worst day</div><div class="d">${WD_FULL[worst.day] || worst.day}</div>` +
-        `<div class="p neg"><b>${signed(worst.pnl)}</b> over ${worst.days} day${worst.days === 1 ? "" : "s"} · ${worst.win_rate}% win</div></div>`,
-    ].join("");
+    if (bw) {
+      const tgtNote = target > 0 ? ` · target ${inr(target)}/day` : "";
+      const lowCard = lowIsLoss
+        ? `<div class="wd-bw bad"><div class="k">📉 Worst day <small>(losing)</small></div>` +
+            `<div class="d">${WD_FULL[low.day] || low.day}</div>` +
+            `<div class="p neg"><b>${signed(low.pnl)}</b> over ${low.days} day${low.days === 1 ? "" : "s"} · ${low.win_rate}% win</div></div>`
+        : `<div class="wd-bw"><div class="k">📉 Weakest day <small>(still green)</small></div>` +
+            `<div class="d">${WD_FULL[low.day] || low.day}</div>` +
+            `<div class="p pos"><b>${signed(low.pnl)}</b> over ${low.days} day${low.days === 1 ? "" : "s"} · ${low.win_rate}% win</div></div>`;
+      bw.innerHTML = [
+        `<div class="wd-bw good"><div class="k">📈 Best day${tgtNote}</div><div class="d">${WD_FULL[best.day] || best.day}</div>` +
+          `<div class="p pos"><b>${signed(best.pnl)}</b> over ${best.days} day${best.days === 1 ? "" : "s"} · ${best.win_rate}% win</div></div>`,
+        lowCard,
+      ].join("");
+    }
 
     wrap.innerHTML = full.map((w) => {
-      const label = (WD_FULL[w.day] || w.day).replace(/s$/, "");   // Monday → Monday
-      const tag = w === best ? `<span class="wd-tag best">Best</span>`
-        : w === worst ? `<span class="wd-tag worst">Worst</span>` : "";
+      const label = (WD_FULL[w.day] || w.day).replace(/s$/, "");
       if (!w.days) {
         return `<div class="wd-card">
           <div class="wd-head"><span class="wd-name">${WD_FULL[w.day] || label}</span></div>
@@ -1167,10 +1198,12 @@
           <div class="fbar"><span style="width:0"></span></div>
           <div class="wd-sub">No trades</div></div>`;
       }
+      const status = weekdayStatus(w, target);
       const pos = w.pnl >= 0;
       const width = Math.max(4, Math.round((Math.abs(w.pnl) / maxAbs) * 100));
-      return `<div class="wd-card ${w === best ? "best" : w === worst ? "worst" : ""}">
-        <div class="wd-head"><span class="wd-name">${WD_FULL[w.day] || label}</span>${tag}</div>
+      const cardCls = status === "bad" ? "worst" : status === "good" ? "best" : "";
+      return `<div class="wd-card ${cardCls}">
+        <div class="wd-head"><span class="wd-name">${WD_FULL[w.day] || label}</span>${weekdayBadge(status)}</div>
         <div class="wd-val ${pos ? "pos" : "neg"}">${signed(w.pnl)}</div>
         <div class="fbar"><span class="${pos ? "pos" : "neg"}" style="width:${width}%"></span></div>
         <div class="wd-sub">${w.days} day${w.days === 1 ? "" : "s"} · ${w.win_rate}% win · avg ${signed(w.avg)}</div>

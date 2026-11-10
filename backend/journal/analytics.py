@@ -402,12 +402,15 @@ def insights(period: str = "all", symbol: str | None = None,
     loss = sorted((r for r in rows if float(r["realized"] or 0) < 0),
                   key=lambda r: float(r["realized"]))[:6]
     wd = _weekday_from(rows)
-    best_wd = max(wd, key=lambda d: d["pnl"], default=None)
-    worst_wd = min(wd, key=lambda d: d["pnl"], default=None)
+    _traded_wd = [w for w in wd if w["days"] > 0]   # ignore zero-trade weekdays
+    best_wd = max(_traded_wd, key=lambda d: d["pnl"], default=None)
+    worst_wd = min(_traded_wd, key=lambda d: d["pnl"], default=None)
     s, e = _range(period, start, end)
+    weekly = float(get_targets().get("weekly") or 0)
     result = {
         "period": period, "symbol": symbol or "all", "total": total, "days": len(rows),
         "range": {"start": s, "end": e},
+        "per_day_target": round(weekly / 5, 2) if weekly else 0.0,
         "weekday": wd,
         "best_weekday": best_wd, "worst_weekday": worst_wd,
         "top_profit_days": [{"date": r["date"], "realized": round(float(r["realized"]), 2)} for r in prof],
