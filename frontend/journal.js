@@ -600,6 +600,17 @@
   }
   $("fyersSyncBtn").addEventListener("click", () => fyersSyncNow(false));
 
+  // Predefined setups for the Setup dropdown (edit to taste). Keeping a fixed
+  // list means the "Setup Discipline" analytics group cleanly (no typos).
+  const SETUPS = ["Breakout", "Breakdown", "Reversal", "Trend", "VWAP",
+    "Gap up", "Gap down", "Range", "Scalp", "Momentum", "News/Event", "Other"];
+  function setupOptions(current) {
+    const opts = [""].concat(SETUPS);
+    if (current && !opts.includes(current)) opts.push(current);  // keep an existing custom value
+    return opts.map((o) =>
+      `<option value="${esc(o)}" ${o === current ? "selected" : ""}>${o || "— setup —"}</option>`).join("");
+  }
+
   function renderTrades(rows) {
     const tb = $("tradesTable").querySelector("tbody");
     $("tradeCount").textContent = rows.length ? `(${rows.length})` : "";
@@ -620,7 +631,7 @@
       return `<tr><td style="text-align:left">${dateTxt}</td><td style="text-align:left">${t.time || ""}</td>
         <td style="text-align:left">${t.symbol || ""}</td><td class="${sideCls}">${t.side || ""}</td>
         <td>${fmt(t.qty)}</td><td>${fmt(t.price, 2)}</td><td class="${cls}"><b>${pnl}</b></td>
-        <td><input class="setupin" data-id="${t.id}" value="${esc(tag.setup || "")}" placeholder="setup…" /></td>
+        <td><select class="setupin" data-id="${t.id}">${setupOptions(tag.setup || "")}</select></td>
         <td><select class="planin" data-id="${t.id}">
           <option value="">—</option>
           <option value="1" ${on === 1 ? "selected" : ""}>✓ On plan</option>
