@@ -212,6 +212,7 @@ def journal_overview(start: Optional[str] = Query(None), end: Optional[str] = Qu
         "can_sync": _source.name == "fyers",
         "dhan_connected": jdhan.is_connected(),
         "summary": janalytics.summary(start, end),
+        "capital": janalytics.capital_summary(),
         "range": {"start": start, "end": end},
         "targets": janalytics.targets_progress(),
         "today": jrules.evaluate(today),
@@ -357,6 +358,13 @@ def journal_get_targets():
 async def journal_set_targets(request: Request):
     data = await request.json()
     return janalytics.set_targets(data)
+
+
+@app.post("/api/journal/capital")
+async def journal_set_capital(request: Request):
+    data = await request.json()
+    janalytics.set_capital(data.get("opening"))
+    return janalytics.capital_summary()
 
 
 # Serve index.html with no-cache so structural HTML changes (and the ?v= asset

@@ -101,6 +101,15 @@
     <section id="ruleBanner" class="rulebanner hidden"></section>
     <div id="untaggedNote" class="jnote hidden"></div>
 
+    <section class="card" id="capitalCard">
+      <h2>💰 Capital summary <small>opening capital, P&amp;L, and where you stand today</small></h2>
+      <label class="cap-field">Opening capital (Day 1)
+        <input type="number" id="openingCapital" min="0" step="1000" placeholder="e.g. 100000" />
+      </label>
+      <div class="cap-tiles" id="capitalTiles"></div>
+      <div class="cap-return" id="capitalReturn"></div>
+    </section>
+
     <section class="jtargets">
       <div class="card target" id="weeklyTarget"></div>
       <div class="card target" id="monthlyTarget"></div>
@@ -286,6 +295,12 @@
       <h2>🗓️ This week's plan <small>the daily target to reach your weekly goal</small></h2>
       <div id="weekPlanOverall" class="wk-overall"></div>
       <div id="weekPlanDays" class="wk-days"></div>
+    </section>
+
+    <section class="card" id="monthPlanCard">
+      <h2>📆 This month's plan <small>the weekly target to reach your monthly goal</small></h2>
+      <div id="monthPlanOverall" class="wk-overall"></div>
+      <div id="monthPlanWeeks" class="wk-days"></div>
     </section>
 
     <section class="card" id="gamePlanCard">

@@ -66,6 +66,32 @@ def set_targets(new: dict) -> dict:
     return cur
 
 
+# ------------------------------------------------------------------ capital
+def get_capital() -> float:
+    """The user's opening (Day 1) trading capital, 0 if not set yet."""
+    try:
+        return max(0.0, float(store.get_setting("opening_capital", 0) or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def set_capital(value) -> float:
+    v = max(0.0, float(value or 0))
+    store.set_setting("opening_capital", v)
+    return v
+
+
+def capital_summary() -> dict:
+    """Opening capital + all-time realized P&L -> closing capital and return %."""
+    opening = get_capital()
+    total_pnl = round(sum(float(r["realized"] or 0) for r in store.all_daily()
+                          if r["date"] != "unknown"), 2)
+    closing = round(opening + total_pnl, 2)
+    return_pct = round(total_pnl / opening * 100, 2) if opening else 0.0
+    return {"opening": opening, "total_pnl": total_pnl,
+            "closing": closing, "return_pct": return_pct}
+
+
 def _weekdays_between(a: date, b: date) -> int:
     """Count Mon-Fri days in [a, b] inclusive (a simple trading-day proxy)."""
     if b < a:
@@ -164,6 +190,10 @@ def summary(start: str | None = None, end: str | None = None) -> dict:
 
 
 _WD = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+_MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+_MON_FULL = ["January", "February", "March", "April", "May", "June", "July",
+             "August", "September", "October", "November", "December"]
 
 
 def _period_dates(period: str) -> tuple[str, str]:
@@ -543,6 +573,7 @@ def action_plan(rules_analysis: dict | None = None, rules_config: dict | None = 
     return {"headline": _plan_headline(ins, tg, drag, losers),
             "total": ins["total"], "days": ins["days"], "items": items,
             "week": week_plan(),
+            "month": month_plan(),
             "charts": {
                 "weekday": ins["weekday"],
                 "instruments": ins["instruments"],
@@ -579,6 +610,67 @@ def week_plan() -> dict:
     return {"weekly_target": weekly, "per_day_target": per_day,
             "achieved": round(achieved, 2), "pct": pct,
             "week_start": monday.isoformat(), "days": days}
+
+
+def _weekdays_in(start, end) -> int:
+    """Count Mon–Fri days in the inclusive date range [start, end]."""
+    n = 0
+    d = start
+    while d <= end:
+        if d.weekday() < 5:
+            n += 1
+        d += timedelta(days=1)
+    return n
+
+
+def month_plan() -> dict:
+    """This month's week-by-week plan: the monthly goal split across the weeks of
+    the month (weighted by trading days), with each week's actual P&L and status."""
+    today = _today()
+    month_start = today.replace(day=1)
+    month_end = today.replace(day=calendar.monthrange(today.year, today.month)[1])
+    monthly = float(get_targets().get("monthly") or 0)
+
+    rows = {r["date"]: float(r["realized"] or 0)
+            for r in store.daily_between(month_start.isoformat(), month_end.isoformat())
+            if r["date"] != "unknown"}
+
+    total_weekdays = _weekdays_in(month_start, month_end) or 1
+
+    # Split the month into calendar weeks (Mon–Sun), clipped to the month.
+    weeks = []
+    achieved = 0.0
+    cur = month_start
+    idx = 0
+    while cur <= month_end:
+        wk_monday = cur - timedelta(days=cur.weekday())
+        seg_start = max(month_start, wk_monday)
+        seg_end = min(month_end, wk_monday + timedelta(days=6))
+        cur = wk_monday + timedelta(days=7)
+        wk_days = _weekdays_in(seg_start, seg_end)
+        if wk_days == 0:          # a weekend-only sliver (e.g. month starts on Sat) — skip
+            continue
+        idx += 1
+        target = round(monthly * wk_days / total_weekdays, 2) if monthly else 0.0
+        actual = round(sum(v for ds, v in rows.items()
+                           if seg_start.isoformat() <= ds <= seg_end.isoformat()), 2)
+        traded = any(seg_start.isoformat() <= ds <= seg_end.isoformat() for ds in rows)
+        if traded:
+            achieved += actual
+        future = seg_start > today
+        current = seg_start <= today <= seg_end
+        weeks.append({
+            "label": f"Week {idx}",
+            "range": f"{seg_start.day}–{seg_end.day} {_MON[month_start.month - 1]}",
+            "target": target, "actual": actual, "traded": traded,
+            "future": future, "current": current,
+            "met": bool(traded and target and actual >= target),
+        })
+
+    pct = round(min(100.0, max(0.0, achieved / monthly * 100)), 1) if monthly else 0.0
+    return {"monthly_target": monthly, "achieved": round(achieved, 2), "pct": pct,
+            "month_label": f"{_MON_FULL[month_start.month - 1]} {month_start.year}",
+            "weeks": weeks}
 
 
 def _plan_headline(ins: dict, tg: dict, drag: list, losers: list) -> str:

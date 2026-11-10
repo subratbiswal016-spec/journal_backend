@@ -66,6 +66,7 @@
       lastOverview = d;
       renderBanner(d.today);
       renderUntagged(d.summary);
+      renderCapital(d.capital);
       renderTargets(d.targets);
       renderTiles(d.summary);
       JDAILY = d.summary.daily || [];
@@ -108,6 +109,49 @@
     } else {
       el.classList.add("hidden");
     }
+  }
+
+  // ---- Capital summary: opening capital -> P&L -> closing + return % ----
+  let capLast = { opening: 0, total_pnl: 0, closing: 0, return_pct: 0 };
+  function renderCapital(c) {
+    capLast = c || capLast;
+    const inp = $("openingCapital");
+    if (inp && document.activeElement !== inp) inp.value = capLast.opening || "";
+    drawCapital(capLast);
+  }
+  function capTile(label, value, cls) {
+    return `<div class="cap-tile"><div class="cap-label">${label}</div>` +
+      `<div class="cap-value ${cls || ""}">${value}</div></div>`;
+  }
+  function drawCapital(c) {
+    $("capitalTiles").innerHTML =
+      capTile("Opening capital", inr(c.opening)) +
+      capTile("Total profit / loss", signed(c.total_pnl), c.total_pnl >= 0 ? "pos" : "neg") +
+      capTile("Closing capital today", inr(c.closing));
+    const ret = $("capitalReturn");
+    if (!c.opening) {
+      ret.innerHTML = `<span class="cap-hint">Enter your Day 1 capital above to see your return.</span>`;
+    } else {
+      const rc = c.return_pct >= 0 ? "pos" : "neg";
+      const sign = c.return_pct >= 0 ? "+" : "";
+      ret.innerHTML = `Return on opening capital: <b class="${rc}">${sign}${Number(c.return_pct).toFixed(2)}%</b>`;
+    }
+  }
+  // Live local recompute while typing; persist on change (blur / Enter).
+  if ($("openingCapital")) {
+    $("openingCapital").addEventListener("input", () => {
+      const v = Number($("openingCapital").value) || 0;
+      const pnl = capLast.total_pnl || 0;
+      drawCapital({ opening: v, total_pnl: pnl, closing: v + pnl,
+        return_pct: v ? (pnl / v * 100) : 0 });
+    });
+    $("openingCapital").addEventListener("change", () => {
+      const v = Number($("openingCapital").value) || 0;
+      fetch("/api/journal/capital", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ opening: v }),
+      }).then((r) => r.json()).then(renderCapital).catch(() => {});
+    });
   }
 
   function targetCard(name, t) {
@@ -615,10 +659,57 @@
     }).join("");
   }
 
+  // This month's week-by-week plan with progress bars.
+  function renderMonthPlan(mo) {
+    const overall = $("monthPlanOverall"), weeksEl = $("monthPlanWeeks");
+    if (!overall || !weeksEl) return;
+    if (!mo || !mo.monthly_target) {
+      overall.innerHTML = `<p class="wk-target">Set a monthly target on the Rules page to see your weekly plan.</p>`;
+      weeksEl.innerHTML = "";
+      return;
+    }
+    const achPos = mo.achieved >= 0;
+    overall.innerHTML =
+      `<div class="wk-oline"><span>${mo.month_label} · progress</span>` +
+      `<span><b class="${achPos ? "pos" : "neg"}">${signed(mo.achieved)}</b> / ${inr(mo.monthly_target)} (${mo.pct}%)</span></div>` +
+      `<div class="wk-track"><span style="width:${mo.pct}%"></span></div>`;
+
+    weeksEl.innerHTML = (mo.weeks || []).map((w) => {
+      let badge, cls = "", actualHtml;
+      if (w.future) {
+        badge = `<span class="wk-badge soon">Upcoming</span>`;
+        cls = "future";
+        actualHtml = `<div class="wk-actual pending">—</div>`;
+      } else if (!w.traded) {
+        badge = w.current ? `<span class="wk-badge today">This week</span>` : `<span class="wk-badge soon">No trades</span>`;
+        if (w.current) cls = "today";
+        actualHtml = `<div class="wk-actual pending">${w.current ? "Not yet" : "—"}</div>`;
+      } else {
+        badge = w.met ? `<span class="wk-badge done">✓ Done</span>`
+          : w.actual >= 0 ? `<span class="wk-badge done">Done</span>`
+          : `<span class="wk-badge miss">Done · loss</span>`;
+        cls = w.met ? "met" : "";
+        if (w.current) cls += " today";
+        actualHtml = `<div class="wk-actual ${w.actual >= 0 ? "pos" : "neg"}">${signed(w.actual)}</div>`;
+      }
+      const t = w.target || 1;
+      const width = Math.max(0, Math.min(100, Math.round(Math.abs(w.actual) / t * 100)));
+      const barShown = w.traded && w.actual !== 0;
+      const bar = `<div class="fbar"><span class="${w.actual >= 0 ? "pos" : "neg"}" style="width:${barShown ? width : 0}%"></span></div>`;
+      return `<div class="wk-day ${cls}">
+        <div class="wk-day-head"><div><div class="wk-dname">${w.label}</div><div class="wk-date">${w.range}</div></div>${badge}</div>
+        <div class="wk-target">Target ${inr(w.target)}</div>
+        ${actualHtml}
+        ${bar}
+      </div>`;
+    }).join("");
+  }
+
   function renderGamePlan(plan) {
     const hd = $("planHeadline"), list = $("planItems"), charts = $("planCharts");
     if (!hd || !list) return;
     renderWeekPlan(plan && plan.week);
+    renderMonthPlan(plan && plan.month);
     if (!plan || !plan.items || !plan.items.length) {
       hd.innerHTML = "Import or sync some trades, then save your rules — your personalised plan appears here.";
       list.innerHTML = "";
