@@ -39,6 +39,11 @@ _MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
            "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 
 # Fyers symbol strings for the index underlyings.
+# Strikes to fetch on each side of ATM. Wider = captures more deep-OTM OI so
+# PCR / Max Pain / Support / Resistance reflect the fuller chain (closer to the
+# broker). Fyers caps this at 50.
+_STRIKE_COUNT = 50
+
 FYERS_INDEX = {
     "NIFTY": "NSE:NIFTY50-INDEX",
     "BANKNIFTY": "NSE:NIFTYBANK-INDEX",
@@ -206,7 +211,7 @@ class FyersDataSource(DataSource):
         self._refresh_expiry_cache_if_stale()
         ts = self._expiry_map.get(symbol, {}).get(expiry or "", "")
 
-        resp = self._check(fy.optionchain(data={"symbol": fsym, "strikecount": 25, "timestamp": ts}))
+        resp = self._check(fy.optionchain(data={"symbol": fsym, "strikecount": _STRIKE_COUNT, "timestamp": ts}))
         data = resp.get("data", {}) or {}
 
         # Update expiry map (date label -> epoch) for this symbol.
@@ -221,7 +226,7 @@ class FyersDataSource(DataSource):
         # re-fetch once with the correct timestamp.
         if expiry and not ts and expiry in emap:
             resp = self._check(fy.optionchain(
-                data={"symbol": fsym, "strikecount": 25, "timestamp": emap[expiry]}))
+                data={"symbol": fsym, "strikecount": _STRIKE_COUNT, "timestamp": emap[expiry]}))
             data = resp.get("data", {}) or {}
 
         spot = 0.0
