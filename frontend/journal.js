@@ -824,7 +824,8 @@
   }
 
   function openDhanModal() {
-    if (!$("dhanFrom").value) $("dhanFrom").value = fyStartISO();
+    // Default to today (daily sync). Change "From" to an earlier date to backfill history.
+    if (!$("dhanFrom").value) $("dhanFrom").value = todayISO();
     if (!$("dhanTo").value) $("dhanTo").value = todayISO();
     dhanMsg("");
     $("dhanModal").classList.remove("hidden");
