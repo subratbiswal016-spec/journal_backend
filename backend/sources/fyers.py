@@ -202,57 +202,46 @@ class FyersDataSource(DataSource):
 
     # ----------------------------------------------------------- screener
     def fetch_quotes(self, tickers: list[str]) -> list[dict]:
-        """Live quotes for NSE equities. `tickers` are plain symbols (e.g. SBIN).
-        Uses the POST quotes endpoint (quotes_v2, symbols as a list). Resilient:
-        on a batch error it splits & retries, isolating bad tickers; if nothing
-        works it raises the real Fyers error (with code) so the cause is visible."""
-        fy = self._model()
-        out: list[dict] = []
-        errors: list[str] = []
-        syms = [f"NSE:{t}-EQ" for t in tickers]
-        self._quotes_into(fy, syms, out, errors)
-        if not out and errors:          # nothing worked → surface the real reason
-            raise RuntimeError(errors[-1])
-        return out
+        """Live quotes for NSE equities via the `depth` endpoint (one symbol per
+        call, but the one that works on this account — the /quotes endpoint is
+        blocked). Parallelized so scanning the universe stays fast; per-symbol
+        failures are skipped (best effort)."""
+        from concurrent.futures import ThreadPoolExecutor
+        fy = self._model()        # raises AuthRequired if the token is invalid
 
-    def _quotes_into(self, fy, syms, out, errors, batch: int = 40) -> None:
-        for i in range(0, len(syms), batch):
-            chunk = syms[i:i + batch]
+        def one(t: str):
+            sym = f"NSE:{t}-EQ"
             try:
-                resp = fy.quotes_v2(data={"symbols": chunk})   # POST, list of symbols
-            except Exception as e:  # noqa: BLE001 - SDK/transport error
-                resp = {"s": "error", "message": f"{type(e).__name__}: {e}"}
+                resp = fy.depth(data={"symbol": sym, "ohlcv_flag": 1})
+                if not isinstance(resp, dict) or resp.get("s") == "error":
+                    return None
+                d = (resp.get("d") or {}).get(sym) or {}
+                g = lambda *ks: next((d[k] for k in ks if d.get(k) not in (None, "")), None)
+                ltp = g("ltp", "lp")
+                if ltp in (None, 0):
+                    return None
+                ch = g("ch")
+                # prefer ltp - change (unambiguous); fall back to the close field
+                if ch is not None:
+                    prev = ltp - ch
+                else:
+                    prev = g("prev_close_price", "c")
+                return {"ticker": t, "ltp": ltp,
+                        "open": g("o", "open_price"), "high": g("h", "high_price"),
+                        "low": g("l", "low_price"), "prev_close": prev,
+                        "volume": g("v", "volume", "vol")}
+            except Exception:  # noqa: BLE001 - best effort per symbol
+                return None
 
-            bad = (not isinstance(resp, dict) or resp.get("s") == "error"
-                   or (resp.get("code", 200) < 0 and not resp.get("d")))
-            if bad:
-                msg = str((resp or {}).get("message") or resp)
-                code = resp.get("code") if isinstance(resp, dict) else None
-                if code in (-8, -15, -16, -17) or "token" in msg.lower() or "authoriz" in msg.lower():
-                    raise AuthRequired(f"Fyers token rejected: {msg}")
-                if len(chunk) == 1:
-                    errors.append(f"{msg} [code {code}]")
-                    continue
-                mid = len(chunk) // 2
-                self._quotes_into(fy, chunk[:mid], out, errors, batch=len(chunk))
-                self._quotes_into(fy, chunk[mid:], out, errors, batch=len(chunk))
-                continue
-
-            for item in resp.get("d", []) or []:
-                v = item.get("v") or {}
-                lp = v.get("lp")
-                if lp in (None, 0, "0"):        # no valid price → skip
-                    continue
-                name = (item.get("n") or v.get("symbol") or "").replace("NSE:", "").replace("-EQ", "")
-                out.append({
-                    "ticker": name,
-                    "ltp": lp,
-                    "open": v.get("open_price"),
-                    "high": v.get("high_price"),
-                    "low": v.get("low_price"),
-                    "prev_close": v.get("prev_close_price"),
-                    "volume": v.get("volume"),
-                })
+        out: list[dict] = []
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            for r in ex.map(one, tickers):
+                if r:
+                    out.append(r)
+        if not out:
+            raise RuntimeError("No quotes returned from the depth endpoint "
+                               "(check the Fyers token / data permissions).")
+        return out
 
     def fetch_history(self, ticker: str, days: int = 120) -> list[list]:
         """Daily candles [ts,o,h,l,c,v] for an NSE equity over the last `days`."""
