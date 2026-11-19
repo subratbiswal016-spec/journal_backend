@@ -202,14 +202,29 @@ class FyersDataSource(DataSource):
 
     # ----------------------------------------------------------- screener
     def fetch_quotes(self, tickers: list[str]) -> list[dict]:
-        """Live quotes for NSE equities. `tickers` are plain symbols (e.g. SBIN);
-        returns normalized dicts with ltp/open/high/low/prev_close/volume."""
+        """Live quotes for NSE equities. `tickers` are plain symbols (e.g. SBIN).
+        Resilient: Fyers rejects the whole call if ANY symbol is invalid, so on a
+        failure we split the batch and retry, isolating and skipping bad tickers."""
         fy = self._model()
         out: list[dict] = []
         syms = [f"NSE:{t}-EQ" for t in tickers]
-        for i in range(0, len(syms), 50):          # Fyers caps quotes at 50/call
-            batch = syms[i:i + 50]
-            resp = self._check(fy.quotes(data={"symbols": ",".join(batch)}))
+        self._quotes_into(fy, syms, out)
+        return out
+
+    def _quotes_into(self, fy, syms: list[str], out: list[dict], batch: int = 20) -> None:
+        for i in range(0, len(syms), batch):
+            chunk = syms[i:i + batch]
+            try:
+                resp = self._check(fy.quotes(data={"symbols": ",".join(chunk)}))
+            except AuthRequired:
+                raise
+            except Exception:  # noqa: BLE001 - bad/renamed symbol or size: split & retry
+                if len(chunk) == 1:
+                    continue  # this single symbol is invalid — skip it
+                mid = len(chunk) // 2
+                self._quotes_into(fy, chunk[:mid], out, batch=len(chunk))
+                self._quotes_into(fy, chunk[mid:], out, batch=len(chunk))
+                continue
             for item in resp.get("d", []) or []:
                 if item.get("s") != "ok":
                     continue
@@ -224,7 +239,18 @@ class FyersDataSource(DataSource):
                     "prev_close": v.get("prev_close_price"),
                     "volume": v.get("volume"),
                 })
-        return out
+
+    def fetch_history(self, ticker: str, days: int = 120) -> list[list]:
+        """Daily candles [ts,o,h,l,c,v] for an NSE equity over the last `days`."""
+        fy = self._model()
+        end = _ist_now().date()
+        start = end - timedelta(days=days)
+        resp = self._check(fy.history(data={
+            "symbol": f"NSE:{ticker}-EQ", "resolution": "D", "date_format": "1",
+            "range_from": start.isoformat(), "range_to": end.isoformat(),
+            "cont_flag": "1",
+        }))
+        return resp.get("candles") or []
 
     # ------------------------------------------------------------- option chain
     def get_option_chain(self, symbol: str, expiry: Optional[str] = None) -> OptionChain:

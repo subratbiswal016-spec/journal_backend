@@ -107,7 +107,7 @@
     tb.innerHTML = (d.rows || []).map((r, i) => {
       const cc = r.chg_pct >= 0 ? "pos" : "neg";
       const gc = r.gap_pct >= 0 ? "pos" : "neg";
-      return `<tr>
+      return `<tr class="scr-row" data-sym="${esc(r.symbol)}" title="${esc(r.why || "")}">
         <td>${i + 1}</td>
         <td style="text-align:left"><b>${esc(r.symbol)}</b></td>
         <td>${fmt(r.ltp, 2)}</td>
@@ -115,8 +115,14 @@
         <td class="${gc}">${r.gap_pct >= 0 ? "+" : ""}${r.gap_pct}%</td>
         <td>${r.range_pct}%</td>
         <td>${fmt(r.volume)}</td>
+        <td>${sigBadge(r.signal)}</td>
       </tr>`;
     }).join("");
+  }
+  function sigBadge(sig) {
+    const s = sig || "Neutral";
+    const cls = /bull/i.test(s) ? "bull" : /bear/i.test(s) ? "bear" : "flat";
+    return `<span class="sig ${cls}">${esc(s)}</span>`;
   }
   document.querySelectorAll("#scrSortSeg button").forEach((b) =>
     b.addEventListener("click", () => {
@@ -125,6 +131,43 @@
       loadScreener();
     }));
   if ($("scrRefresh")) $("scrRefresh").addEventListener("click", loadScreener);
+
+  // ---- per-stock analysis (trend + momentum) on row click ----
+  if ($("screenerTable")) $("screenerTable").addEventListener("click", (e) => {
+    const row = e.target.closest(".scr-row");
+    if (row) analyzeStock(row.dataset.sym);
+  });
+  if ($("anaCloseBtn")) $("anaCloseBtn").addEventListener("click", () => $("analyzeModal").classList.add("hidden"));
+  async function analyzeStock(sym) {
+    $("anaTitle").textContent = sym + " · analysis";
+    $("anaBody").innerHTML = `<p class="modal-sub">Loading ${esc(sym)}…</p>`;
+    $("analyzeModal").classList.remove("hidden");
+    try {
+      const r = await fetch("/api/screener/analyze?symbol=" + encodeURIComponent(sym));
+      if (r.status === 401) { $("anaBody").innerHTML = `<p class="jnote err">Log in to Fyers on the Dashboard tab first.</p>`; return; }
+      const d = await r.json();
+      if (!r.ok || d.ok === false) { $("anaBody").innerHTML = `<p class="jnote">${esc(d.note || d.detail || "No analysis available.")}</p>`; return; }
+      renderAnalysis(d);
+    } catch (err) {
+      $("anaBody").innerHTML = `<p class="jnote err">Could not analyse: ${esc(err.message)}</p>`;
+    }
+  }
+  function renderAnalysis(d) {
+    const scls = /bull/i.test(d.signal) ? "bull" : /bear/i.test(d.signal) ? "bear" : "flat";
+    const row = (k, v) => `<div class="ana-row"><span>${k}</span><b>${v}</b></div>`;
+    $("anaBody").innerHTML =
+      `<div class="ana-head"><span class="sig ${scls}" style="font-size:14px;padding:4px 12px">${esc(d.signal)}</span>` +
+      `<span class="ana-trend">${esc(d.trend)}</span></div>` +
+      `<div class="ana-grid">` +
+      row("Price", "₹" + fmt(d.price, 2)) +
+      row("20-EMA", d.ema20 ? "₹" + fmt(d.ema20, 2) : "—") +
+      row("50-EMA", d.ema50 ? "₹" + fmt(d.ema50, 2) : "—") +
+      row("RSI(14)", d.rsi != null ? d.rsi : "—") +
+      row("20-day range", "₹" + fmt(d.low20, 0) + " – ₹" + fmt(d.high20, 0)) +
+      row("In range", (d.range_pos != null ? d.range_pos : "—") + "%") +
+      `</div>` +
+      `<ul class="ana-notes">` + (d.notes || []).map((n) => `<li>${esc(n)}</li>`).join("") + `</ul>`;
+  }
 
   // ---------------------------------------------------------------- load
   async function loadJournal() {

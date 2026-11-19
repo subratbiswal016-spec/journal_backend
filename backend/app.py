@@ -215,6 +215,23 @@ def api_screener(sort: str = Query("movers")):
             "rows": screener.demo_rows(sort), "live": False}
 
 
+@app.get("/api/screener/analyze")
+def api_screener_analyze(symbol: str = Query(...)):
+    """Trend/momentum analysis for one stock (data, not advice)."""
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        raise HTTPException(status_code=400, detail="symbol required")
+    if _source.name == "fyers":
+        try:
+            candles = _source.fetch_history(sym)
+            return screener.analyze(sym, candles)
+        except AuthRequired:
+            raise HTTPException(status_code=401, detail="login_required")
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"Analyze failed: {e}")
+    return screener.demo_analysis(sym)
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True, "source": _source.name,

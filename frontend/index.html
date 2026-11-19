@@ -243,14 +243,26 @@
       <div class="table-scroll" style="max-height:600px">
         <table id="screenerTable" class="data">
           <thead><tr><th>#</th><th style="text-align:left">Symbol</th><th>LTP</th>
-            <th>% Chg</th><th>Gap %</th><th>Day Range %</th><th>Volume</th></tr></thead>
+            <th>% Chg</th><th>Gap %</th><th>Day Range %</th><th>Volume</th><th>Signal</th></tr></thead>
           <tbody></tbody>
         </table>
+        <p class="modal-sub" style="margin-top:6px">💡 Tap any row for a full trend &amp; momentum analysis of that stock.</p>
       </div>
       <p class="modal-sub" style="margin-top:10px">Live quotes from Fyers, ranked by measurable factors (move, gap, range, volume).
         <b>This is data, not buy/sell advice</b> — screen for where the action is, then apply your own setup.</p>
     </section>
   </main>
+
+  <div id="analyzeModal" class="modal hidden">
+    <div class="modal-card">
+      <div class="jtoolbar" style="align-items:center">
+        <h2 id="anaTitle" style="margin:0">Analysis</h2>
+        <button id="anaCloseBtn" class="jbtn">Close</button>
+      </div>
+      <div id="anaBody"><p class="modal-sub">Loading…</p></div>
+      <p class="modal-sub" style="margin-top:10px"><b>Not buy/sell advice.</b> A mechanical read of trend (EMAs) and momentum (RSI) from recent history.</p>
+    </div>
+  </div>
 
   <div id="dhanModal" class="modal hidden">
     <div class="modal-card">

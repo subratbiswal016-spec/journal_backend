@@ -161,6 +161,20 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 #screenerTable td.neg { color: var(--call); font-weight: 700; }
 #screenerTable td { text-align: right; }
 #screenerTable td:nth-child(2) { text-align: left; }
+#screenerTable td:last-child { text-align: center; }
+.scr-row { cursor: pointer; }
+.scr-row:hover { background: var(--panel-2); }
+.sig { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 20px; }
+.sig.bull { background: rgba(38,166,154,.18); color: #2fd3c2; }
+.sig.bear { background: rgba(239,83,80,.18); color: #ff7b78; }
+.sig.flat { background: var(--panel-2); color: var(--muted); }
+.ana-head { display: flex; align-items: center; gap: 12px; margin: 4px 0 14px; }
+.ana-trend { font-size: 18px; font-weight: 700; color: var(--text); }
+.ana-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 18px; margin-bottom: 14px; }
+.ana-row { display: flex; justify-content: space-between; border-bottom: 1px solid var(--line); padding: 6px 0; font-size: 14px; }
+.ana-row span { color: var(--muted); }
+.ana-notes { margin: 0; padding-left: 18px; color: var(--text); font-size: 14px; line-height: 1.7; }
+.light .sig.bull { color: #0f766e; } .light .sig.bear { color: #c0392b; }
 .pill.Bullish { background: var(--put-dim); color: var(--put); }
 .pill.Bearish { background: var(--call-dim); color: var(--call); }
 .pill.Neutral { background: var(--panel-2); color: var(--muted); }
