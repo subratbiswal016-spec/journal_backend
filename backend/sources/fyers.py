@@ -207,32 +207,37 @@ class FyersDataSource(DataSource):
         failure we split the batch and retry, isolating and skipping bad tickers."""
         fy = self._model()
         out: list[dict] = []
+        errors: list[str] = []
         syms = [f"NSE:{t}-EQ" for t in tickers]
-        self._quotes_into(fy, syms, out)
+        self._quotes_into(fy, syms, out, errors)
+        if not out and errors:          # nothing worked → surface the real reason
+            raise RuntimeError(errors[-1])
         return out
 
-    def _quotes_into(self, fy, syms: list[str], out: list[dict], batch: int = 20) -> None:
+    def _quotes_into(self, fy, syms, out, errors, batch: int = 20) -> None:
         for i in range(0, len(syms), batch):
             chunk = syms[i:i + batch]
             try:
                 resp = self._check(fy.quotes(data={"symbols": ",".join(chunk)}))
             except AuthRequired:
                 raise
-            except Exception:  # noqa: BLE001 - bad/renamed symbol or size: split & retry
+            except Exception as e:  # noqa: BLE001 - bad/renamed symbol or size: split & retry
                 if len(chunk) == 1:
-                    continue  # this single symbol is invalid — skip it
+                    errors.append(str(e))
+                    continue           # this single symbol is invalid — skip it
                 mid = len(chunk) // 2
-                self._quotes_into(fy, chunk[:mid], out, batch=len(chunk))
-                self._quotes_into(fy, chunk[mid:], out, batch=len(chunk))
+                self._quotes_into(fy, chunk[:mid], out, errors, batch=len(chunk))
+                self._quotes_into(fy, chunk[mid:], out, errors, batch=len(chunk))
                 continue
             for item in resp.get("d", []) or []:
-                if item.get("s") != "ok":
+                v = item.get("v") or {}
+                lp = v.get("lp")
+                if lp in (None, 0, "0"):        # no valid price → skip (don't gate on item['s'])
                     continue
-                v = item.get("v", {}) or {}
-                name = (item.get("n", "") or "").replace("NSE:", "").replace("-EQ", "")
+                name = (item.get("n") or v.get("symbol") or "").replace("NSE:", "").replace("-EQ", "")
                 out.append({
                     "ticker": name,
-                    "ltp": v.get("lp"),
+                    "ltp": lp,
                     "open": v.get("open_price"),
                     "high": v.get("high_price"),
                     "low": v.get("low_price"),
