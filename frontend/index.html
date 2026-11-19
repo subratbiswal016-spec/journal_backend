@@ -20,6 +20,7 @@
         <button class="tab active" data-view="oi">📈 Dashboard</button>
         <button class="tab" data-view="journal">📓 Journal</button>
         <button class="tab" data-view="capital">💰 Capital</button>
+        <button class="tab" data-view="screener">🔎 Screener</button>
         <button class="tab" data-view="insights">🔍 Insights</button>
         <button class="tab" data-view="rules">⚖ Rules</button>
       </nav>
@@ -219,6 +220,35 @@
     <section class="card">
       <h2>🗒️ Daily journal <small id="capJournalSub"></small></h2>
       <div id="capitalDays" class="cap-journal"></div>
+    </section>
+  </main>
+
+  <main id="viewScreener" class="hidden">
+    <section class="card">
+      <div class="jtoolbar">
+        <h2 style="margin:0">🔎 Intraday Screener <small>liquid F&amp;O stocks, ranked by today's action</small></h2>
+        <div class="jactions">
+          <div class="seg" id="scrSortSeg">
+            <button data-s="movers" class="active">Most active</button>
+            <button data-s="gainers">Gainers</button>
+            <button data-s="losers">Losers</button>
+            <button data-s="volatile">Volatile</button>
+            <button data-s="volume">Volume</button>
+            <button data-s="gap">Gap</button>
+          </div>
+          <button id="scrRefresh" class="jbtn primary">⟳ Refresh</button>
+        </div>
+      </div>
+      <div id="scrStatus" class="jnote hidden"></div>
+      <div class="table-scroll" style="max-height:600px">
+        <table id="screenerTable" class="data">
+          <thead><tr><th>#</th><th style="text-align:left">Symbol</th><th>LTP</th>
+            <th>% Chg</th><th>Gap %</th><th>Day Range %</th><th>Volume</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <p class="modal-sub" style="margin-top:10px">Live quotes from Fyers, ranked by measurable factors (move, gap, range, volume).
+        <b>This is data, not buy/sell advice</b> — screen for where the action is, then apply your own setup.</p>
     </section>
   </main>
 

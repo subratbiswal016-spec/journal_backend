@@ -200,6 +200,32 @@ class FyersDataSource(DataSource):
         """Today's positions incl. realized P&L totals."""
         return self._check(self._model().positions())
 
+    # ----------------------------------------------------------- screener
+    def fetch_quotes(self, tickers: list[str]) -> list[dict]:
+        """Live quotes for NSE equities. `tickers` are plain symbols (e.g. SBIN);
+        returns normalized dicts with ltp/open/high/low/prev_close/volume."""
+        fy = self._model()
+        out: list[dict] = []
+        syms = [f"NSE:{t}-EQ" for t in tickers]
+        for i in range(0, len(syms), 50):          # Fyers caps quotes at 50/call
+            batch = syms[i:i + 50]
+            resp = self._check(fy.quotes(data={"symbols": ",".join(batch)}))
+            for item in resp.get("d", []) or []:
+                if item.get("s") != "ok":
+                    continue
+                v = item.get("v", {}) or {}
+                name = (item.get("n", "") or "").replace("NSE:", "").replace("-EQ", "")
+                out.append({
+                    "ticker": name,
+                    "ltp": v.get("lp"),
+                    "open": v.get("open_price"),
+                    "high": v.get("high_price"),
+                    "low": v.get("low_price"),
+                    "prev_close": v.get("prev_close_price"),
+                    "volume": v.get("volume"),
+                })
+        return out
+
     # ------------------------------------------------------------- option chain
     def get_option_chain(self, symbol: str, expiry: Optional[str] = None) -> OptionChain:
         symbol = symbol.upper()

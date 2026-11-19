@@ -60,15 +60,71 @@
     $("viewOI").classList.toggle("hidden", view !== "oi");
     $("viewJournal").classList.toggle("hidden", view !== "journal");
     $("viewCapital").classList.toggle("hidden", view !== "capital");
+    $("viewScreener").classList.toggle("hidden", view !== "screener");
     $("viewRules").classList.toggle("hidden", view !== "rules");
     $("viewInsights").classList.toggle("hidden", view !== "insights");
     const oiCtl = $("oiControls");
     if (oiCtl) oiCtl.style.display = view === "oi" ? "" : "none";
     if (view === "journal") loadJournal();
     if (view === "capital") loadCapital();
+    if (view === "screener") loadScreener();
     if (view === "rules") loadRules();
     if (view === "insights") loadInsights();
   }
+
+  // ---------------------------------------------------------- screener
+  let scrSort = "movers";
+  function scrStatus(msg, err) {
+    const s = $("scrStatus");
+    if (!s) return;
+    if (!msg) { s.classList.add("hidden"); return; }
+    s.className = "jnote" + (err ? " err" : "");
+    s.innerHTML = msg;
+    s.classList.remove("hidden");
+  }
+  async function loadScreener() {
+    showLoading(true);
+    const btn = $("scrRefresh"), old = btn ? btn.textContent : "";
+    if (btn) { btn.disabled = true; btn.textContent = "Scanning…"; }
+    try {
+      const r = await fetch("/api/screener?sort=" + encodeURIComponent(scrSort));
+      if (r.status === 401) { scrStatus("Log in to Fyers on the Dashboard tab to load live stocks.", true); return; }
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || "screener failed");
+      renderScreener(d);
+    } catch (e) {
+      scrStatus("Could not load screener: " + e.message, true);
+    } finally {
+      showLoading(false);
+      if (btn) { btn.disabled = false; btn.textContent = old; }
+    }
+  }
+  function renderScreener(d) {
+    scrStatus(d.live === false
+      ? "⚠️ Demo data — switch the app to the Fyers data source for live stocks."
+      : `Live · scanned ${d.scanned} F&amp;O stocks`, false);
+    const tb = $("screenerTable").querySelector("tbody");
+    tb.innerHTML = (d.rows || []).map((r, i) => {
+      const cc = r.chg_pct >= 0 ? "pos" : "neg";
+      const gc = r.gap_pct >= 0 ? "pos" : "neg";
+      return `<tr>
+        <td>${i + 1}</td>
+        <td style="text-align:left"><b>${esc(r.symbol)}</b></td>
+        <td>${fmt(r.ltp, 2)}</td>
+        <td class="${cc}">${r.chg_pct >= 0 ? "+" : ""}${r.chg_pct}%</td>
+        <td class="${gc}">${r.gap_pct >= 0 ? "+" : ""}${r.gap_pct}%</td>
+        <td>${r.range_pct}%</td>
+        <td>${fmt(r.volume)}</td>
+      </tr>`;
+    }).join("");
+  }
+  document.querySelectorAll("#scrSortSeg button").forEach((b) =>
+    b.addEventListener("click", () => {
+      scrSort = b.dataset.s;
+      document.querySelectorAll("#scrSortSeg button").forEach((x) => x.classList.toggle("active", x === b));
+      loadScreener();
+    }));
+  if ($("scrRefresh")) $("scrRefresh").addEventListener("click", loadScreener);
 
   // ---------------------------------------------------------------- load
   async function loadJournal() {

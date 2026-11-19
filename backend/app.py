@@ -23,7 +23,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                RedirectResponse, Response)
 from fastapi.staticfiles import StaticFiles
 
-from . import analytics, config
+from . import analytics, config, screener
 from .sources import get_source
 from .sources.base import AuthRequired
 from .journal import store as jstore, rules as jrules, analytics as janalytics
@@ -196,6 +196,23 @@ def api_snapshot(
     payload["fetched_at"] = fetched_at
     payload["stale_error"] = error  # non-null => showing cached data after a failed refresh
     return JSONResponse(payload)
+
+
+@app.get("/api/screener")
+def api_screener(sort: str = Query("movers")):
+    """Rank liquid F&O stocks by intraday factors (data, not advice)."""
+    if _source.name == "fyers":
+        try:
+            quotes = _source.fetch_quotes(screener.FO_STOCKS)
+            return {"available": True, "sort": sort, "scanned": len(quotes),
+                    "rows": screener.rank_quotes(quotes, sort), "live": True}
+        except AuthRequired:
+            raise HTTPException(status_code=401, detail="login_required")
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"Screener failed: {e}")
+    # mock / other sources → demo data so the UI still works
+    return {"available": True, "sort": sort, "scanned": len(screener.FO_STOCKS),
+            "rows": screener.demo_rows(sort), "live": False}
 
 
 @app.get("/healthz")

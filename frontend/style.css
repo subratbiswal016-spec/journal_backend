@@ -157,6 +157,10 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .clear-opts .jbtn { justify-content: flex-start; text-align: left; }
 .jbtn.danger { border-color: rgba(239,83,80,.5); color: #ef5350; }
 .jbtn.danger:hover { background: rgba(239,83,80,.12); }
+#screenerTable td.pos { color: var(--put); font-weight: 700; }
+#screenerTable td.neg { color: var(--call); font-weight: 700; }
+#screenerTable td { text-align: right; }
+#screenerTable td:nth-child(2) { text-align: left; }
 .pill.Bullish { background: var(--put-dim); color: var(--put); }
 .pill.Bearish { background: var(--call-dim); color: var(--call); }
 .pill.Neutral { background: var(--panel-2); color: var(--muted); }
