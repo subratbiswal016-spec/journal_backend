@@ -123,68 +123,139 @@ def _rsi(closes: list[float], period: int = 14) -> float | None:
     return round(100 - 100 / (1 + rs), 1)
 
 
-def analyze(symbol: str, candles: list[list]) -> dict:
-    """Trend + momentum read from daily candles ([ts,o,h,l,c,v]). Data, not advice."""
-    closes = [float(c[4]) for c in candles if c and len(c) >= 5]
-    if len(closes) < 20:
+def _vwap(intraday: list[list]) -> float | None:
+    """Volume-weighted average price from intraday candles ([ts,o,h,l,c,v])."""
+    num = den = 0.0
+    for c in intraday:
+        if len(c) < 6:
+            continue
+        tp = (float(c[2]) + float(c[3]) + float(c[4])) / 3.0   # typical price
+        v = float(c[5] or 0)
+        num += tp * v
+        den += v
+    return round(num / den, 2) if den else None
+
+
+def _today_candles(intraday: list[list]) -> list[list]:
+    """Keep only the most recent trading day's candles (by date of the epoch ts)."""
+    if not intraday:
+        return []
+    from datetime import datetime, timezone, timedelta
+    ist = timezone(timedelta(hours=5, minutes=30))
+    last_day = datetime.fromtimestamp(int(intraday[-1][0]), ist).date()
+    return [c for c in intraday
+            if datetime.fromtimestamp(int(c[0]), ist).date() == last_day]
+
+
+def analyze(symbol: str, daily: list[list], intraday: list[list] | None = None) -> dict:
+    """Day-trading read: intraday (VWAP, 5-min trend/RSI, opening range, levels)
+    plus a daily swing context. All mechanical — data, not advice."""
+    daily = [c for c in (daily or []) if c and len(c) >= 5]
+    dcloses = [float(c[4]) for c in daily]
+    if len(dcloses) < 5 and not intraday:
         return {"symbol": symbol, "ok": False,
-                "note": "Not enough history to analyse this stock."}
-    price = closes[-1]
-    ema20 = _ema(closes, 20)
-    ema50 = _ema(closes, 50)
-    rsi = _rsi(closes)
-    look = candles[-20:]
-    hi20 = max(float(c[2]) for c in look)
-    lo20 = min(float(c[3]) for c in look)
+                "note": "Not enough data to analyse this stock right now."}
 
-    above20 = ema20 is not None and price > ema20
-    above50 = ema50 is not None and price > ema50
-    if above20 and above50 and (ema50 is None or (ema20 or 0) > (ema50 or 0)):
-        trend = "Uptrend"
-    elif (not above20) and (not above50) and (ema50 is None or (ema20 or 0) < (ema50 or 0)):
-        trend = "Downtrend"
+    out = {"symbol": symbol, "ok": True, "notes": []}
+    notes = out["notes"]
+
+    # ---- daily swing context ----
+    if len(dcloses) >= 20:
+        price_d = dcloses[-1]
+        ema20, ema50 = _ema(dcloses, 20), _ema(dcloses, 50)
+        d_rsi = _rsi(dcloses)
+        above20 = ema20 and price_d > ema20
+        above50 = ema50 and price_d > ema50
+        if above20 and above50 and (not ema50 or (ema20 or 0) > (ema50 or 0)):
+            dtrend = "Uptrend"
+        elif (not above20) and (not above50) and (not ema50 or (ema20 or 0) < (ema50 or 0)):
+            dtrend = "Downtrend"
+        else:
+            dtrend = "Sideways"
+        out.update({"daily_trend": dtrend, "daily_rsi": d_rsi,
+                    "ema20": round(ema20, 2) if ema20 else None,
+                    "ema50": round(ema50, 2) if ema50 else None})
+        notes.append(f"Daily trend is {dtrend.lower()} (price vs 20/50-EMA)"
+                     + (f", RSI {d_rsi}" if d_rsi is not None else "") + ".")
+
+    # ---- intraday (5-min) day-trading read ----
+    today = _today_candles(intraday or [])
+    if len(today) >= 3:
+        icloses = [float(c[4]) for c in today]
+        price = icloses[-1]
+        d_open = float(today[0][1])
+        d_high = max(float(c[2]) for c in today)
+        d_low = min(float(c[3]) for c in today)
+        vwap = _vwap(today)
+        iema9, iema20 = _ema(icloses, 9), _ema(icloses, 20)
+        i_rsi = _rsi(icloses)
+        # opening range = first 15 min (three 5-min candles)
+        orb = today[:3]
+        or_high = max(float(c[2]) for c in orb)
+        or_low = min(float(c[3]) for c in orb)
+        prev_close = dcloses[-2] if len(dcloses) >= 2 else d_open
+        chg_pct = round((price - prev_close) / prev_close * 100, 2) if prev_close else 0.0
+
+        # intraday signal score
+        score = 0
+        if vwap: score += 1 if price > vwap else -1
+        if iema9: score += 1 if price > iema9 else -1
+        if iema9 and iema20: score += 1 if iema9 > iema20 else -1
+        if i_rsi is not None:
+            score += 1 if i_rsi > 58 else -1 if i_rsi < 42 else 0
+        signal = "Bullish" if score >= 2 else "Bearish" if score <= -2 else "Neutral"
+
+        out.update({
+            "signal": signal, "trend": ("Uptrend" if score >= 2 else "Downtrend" if score <= -2 else "Sideways"),
+            "price": round(price, 2), "chg_pct": chg_pct,
+            "vwap": vwap, "above_vwap": bool(vwap and price > vwap),
+            "day_open": round(d_open, 2), "day_high": round(d_high, 2), "day_low": round(d_low, 2),
+            "or_high": round(or_high, 2), "or_low": round(or_low, 2),
+            "prev_close": round(prev_close, 2),
+            "i_ema9": round(iema9, 2) if iema9 else None,
+            "i_ema20": round(iema20, 2) if iema20 else None,
+            "i_rsi": i_rsi, "intraday": True,
+        })
+        if vwap:
+            notes.append(f"Price ₹{price:,.2f} is {'ABOVE' if price > vwap else 'BELOW'} VWAP (₹{vwap:,.2f}) "
+                         + ("— intraday buyers in control." if price > vwap else "— intraday sellers in control."))
+        notes.append(f"5-min trend: price {'above' if iema9 and price > iema9 else 'below'} the 9-EMA"
+                     + (f", 9-EMA {'>' if iema9 and iema20 and iema9 > iema20 else '<'} 20-EMA" if iema20 else "") + ".")
+        if i_rsi is not None:
+            tag = "strong" if i_rsi >= 70 else "weak" if i_rsi <= 30 else "balanced"
+            notes.append(f"5-min RSI(14) is {i_rsi} — {tag} intraday momentum.")
+        notes.append(f"Opening-range (first 15 min): ₹{or_low:,.2f}–₹{or_high:,.2f}. "
+                     + (f"A 5-min close above ₹{or_high:,.2f} / below ₹{or_low:,.2f} is the breakout trigger."))
     else:
-        trend = "Sideways"
+        out["intraday"] = False
+        notes.append("No intraday (5-min) data available yet — showing daily context only.")
+        out.setdefault("signal", out.get("daily_trend", "Neutral").replace("Uptrend", "Bullish").replace("Downtrend", "Bearish").replace("Sideways", "Neutral"))
+        out.setdefault("trend", out.get("daily_trend", "Sideways"))
 
-    notes = []
-    notes.append(f"Price ₹{price:,.2f} is {'above' if above20 else 'below'} the 20-EMA"
-                 + (f" (₹{ema20:,.0f})" if ema20 else "")
-                 + f" and {'above' if above50 else 'below'} the 50-EMA"
-                 + (f" (₹{ema50:,.0f})" if ema50 else "") + ".")
-    if rsi is not None:
-        tag = "overbought" if rsi >= 70 else "oversold" if rsi <= 30 else "neutral"
-        notes.append(f"RSI(14) is {rsi} — {tag} momentum.")
-    rng = hi20 - lo20
-    pos = (price - lo20) / rng * 100 if rng > 0 else 50
-    notes.append(f"Trading at {pos:.0f}% of its 20-day range (₹{lo20:,.0f}–₹{hi20:,.0f}).")
-
-    # Signal = trend filtered by momentum extremes
-    if trend == "Uptrend":
-        signal = "Bullish" if (rsi is None or rsi < 75) else "Bullish (overbought)"
-    elif trend == "Downtrend":
-        signal = "Bearish" if (rsi is None or rsi > 25) else "Bearish (oversold)"
-    else:
-        signal = "Neutral"
-
-    return {"symbol": symbol, "ok": True, "trend": trend, "signal": signal,
-            "price": round(price, 2),
-            "ema20": round(ema20, 2) if ema20 else None,
-            "ema50": round(ema50, 2) if ema50 else None,
-            "rsi": rsi, "high20": round(hi20, 2), "low20": round(lo20, 2),
-            "range_pos": round(pos, 0), "notes": notes}
+    return out
 
 
 def demo_analysis(symbol: str) -> dict:
     """Synthetic analysis so the detail view works in demo mode."""
     import random
+    from datetime import datetime, timezone, timedelta
     rng = random.Random(sum(ord(c) for c in symbol))
     p = rng.uniform(150, 3000)
-    candles = []
+    daily = []
     for i in range(80):
         p *= 1 + rng.uniform(-0.02, 0.023)
         o = p * (1 + rng.uniform(-0.006, 0.006))
-        candles.append([i, o, max(o, p) * 1.01, min(o, p) * 0.99, p, rng.randint(1e5, 5e6)])
-    return analyze(symbol, candles)
+        daily.append([i, o, max(o, p) * 1.01, min(o, p) * 0.99, p, rng.randint(1e5, 5e6)])
+    # today's 5-min candles
+    ist = timezone(timedelta(hours=5, minutes=30))
+    base = int(datetime.now(ist).replace(hour=9, minute=15, second=0, microsecond=0).timestamp())
+    intr = []
+    ip = p
+    for i in range(60):
+        ip *= 1 + rng.uniform(-0.004, 0.0045)
+        o = ip * (1 + rng.uniform(-0.002, 0.002))
+        intr.append([base + i * 300, o, max(o, ip) * 1.003, min(o, ip) * 0.997, ip, rng.randint(1e4, 3e5)])
+    return analyze(symbol, daily, intr)
 
 
 def demo_rows(sort: str = "movers", limit: int = 60) -> list[dict]:

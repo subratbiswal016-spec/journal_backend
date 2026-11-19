@@ -154,19 +154,40 @@
   }
   function renderAnalysis(d) {
     const scls = /bull/i.test(d.signal) ? "bull" : /bear/i.test(d.signal) ? "bear" : "flat";
-    const row = (k, v) => `<div class="ana-row"><span>${k}</span><b>${v}</b></div>`;
-    $("anaBody").innerHTML =
-      `<div class="ana-head"><span class="sig ${scls}" style="font-size:14px;padding:4px 12px">${esc(d.signal)}</span>` +
-      `<span class="ana-trend">${esc(d.trend)}</span></div>` +
-      `<div class="ana-grid">` +
-      row("Price", "₹" + fmt(d.price, 2)) +
-      row("20-EMA", d.ema20 ? "₹" + fmt(d.ema20, 2) : "—") +
-      row("50-EMA", d.ema50 ? "₹" + fmt(d.ema50, 2) : "—") +
-      row("RSI(14)", d.rsi != null ? d.rsi : "—") +
-      row("20-day range", "₹" + fmt(d.low20, 0) + " – ₹" + fmt(d.high20, 0)) +
-      row("In range", (d.range_pos != null ? d.range_pos : "—") + "%") +
-      `</div>` +
-      `<ul class="ana-notes">` + (d.notes || []).map((n) => `<li>${esc(n)}</li>`).join("") + `</ul>`;
+    const money = (v) => (v != null ? "₹" + fmt(v, 2) : "—");
+    const row = (k, v, cls) => `<div class="ana-row"><span>${k}</span><b class="${cls || ""}">${v}</b></div>`;
+    const sect = (title) => `<div class="ana-sect">${title}</div>`;
+    let html =
+      `<div class="ana-head"><span class="sig ${scls}" style="font-size:14px;padding:4px 12px">${esc(d.signal || "—")}</span>` +
+      (d.chg_pct != null ? `<span class="ana-trend ${d.chg_pct >= 0 ? "pos" : "neg"}">${d.chg_pct >= 0 ? "+" : ""}${d.chg_pct}%</span>` : "") +
+      `</div>`;
+
+    if (d.intraday) {
+      const vwapCls = d.above_vwap ? "pos" : "neg";
+      html += sect("📍 Intraday (5-min)") + `<div class="ana-grid">` +
+        row("Price", money(d.price)) +
+        row("VWAP", money(d.vwap) + (d.vwap != null ? (d.above_vwap ? " ▲" : " ▼") : ""), vwapCls) +
+        row("Day open", money(d.day_open)) +
+        row("Prev close", money(d.prev_close)) +
+        row("Day high", money(d.day_high)) +
+        row("Day low", money(d.day_low)) +
+        row("5-min 9-EMA", money(d.i_ema9)) +
+        row("5-min 20-EMA", money(d.i_ema20)) +
+        row("5-min RSI", d.i_rsi != null ? d.i_rsi : "—") +
+        row("Opening range", money(d.or_low) + " – " + money(d.or_high)) +
+        `</div>`;
+    }
+    if (d.daily_trend) {
+      html += sect("📈 Daily swing context") + `<div class="ana-grid">` +
+        row("Daily trend", esc(d.daily_trend)) +
+        row("Daily RSI", d.daily_rsi != null ? d.daily_rsi : "—") +
+        row("20-EMA", money(d.ema20)) +
+        row("50-EMA", money(d.ema50)) +
+        `</div>`;
+    }
+    html += sect("📝 Read") + `<ul class="ana-notes">` +
+      (d.notes || []).map((n) => `<li>${esc(n)}</li>`).join("") + `</ul>`;
+    $("anaBody").innerHTML = html;
   }
 
   // ---------------------------------------------------------------- load

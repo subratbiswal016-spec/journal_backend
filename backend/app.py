@@ -223,8 +223,12 @@ def api_screener_analyze(symbol: str = Query(...)):
         raise HTTPException(status_code=400, detail="symbol required")
     if _source.name == "fyers":
         try:
-            candles = _source.fetch_history(sym)
-            return screener.analyze(sym, candles)
+            daily = _source.fetch_history(sym, resolution="D", days=120)
+            try:
+                intraday = _source.fetch_history(sym, resolution="5", days=3)
+            except Exception:  # noqa: BLE001 - intraday optional; daily still useful
+                intraday = []
+            return screener.analyze(sym, daily, intraday)
         except AuthRequired:
             raise HTTPException(status_code=401, detail="login_required")
         except Exception as e:  # noqa: BLE001

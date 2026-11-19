@@ -243,13 +243,14 @@ class FyersDataSource(DataSource):
                                "(check the Fyers token / data permissions).")
         return out
 
-    def fetch_history(self, ticker: str, days: int = 120) -> list[list]:
-        """Daily candles [ts,o,h,l,c,v] for an NSE equity over the last `days`."""
+    def fetch_history(self, ticker: str, resolution: str = "D", days: int = 120) -> list[list]:
+        """Candles [ts,o,h,l,c,v] for an NSE equity. resolution 'D' (daily) or a
+        minute string like '5' (5-min). `days` is the lookback window."""
         fy = self._model()
         end = _ist_now().date()
         start = end - timedelta(days=days)
         resp = self._check(fy.history(data={
-            "symbol": f"NSE:{ticker}-EQ", "resolution": "D", "date_format": "1",
+            "symbol": f"NSE:{ticker}-EQ", "resolution": resolution, "date_format": "1",
             "range_from": start.isoformat(), "range_to": end.isoformat(),
             "cont_flag": "1",
         }))
