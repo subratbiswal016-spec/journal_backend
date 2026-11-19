@@ -198,6 +198,16 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 
 /* ---------- tables ---------- */
 .table-scroll { overflow-x: auto; max-height: 560px; overflow-y: auto; border-radius: 8px; }
+
+/* slim, subtle scrollbars (table areas + modal) */
+.table-scroll, .modal-card { scrollbar-width: thin; scrollbar-color: rgba(140,150,170,.35) transparent; }
+.table-scroll::-webkit-scrollbar, .modal-card::-webkit-scrollbar { width: 8px; height: 8px; }
+.table-scroll::-webkit-scrollbar-track, .modal-card::-webkit-scrollbar-track { background: transparent; }
+.table-scroll::-webkit-scrollbar-thumb, .modal-card::-webkit-scrollbar-thumb {
+  background: rgba(140,150,170,.35); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+.table-scroll::-webkit-scrollbar-thumb:hover, .modal-card::-webkit-scrollbar-thumb:hover {
+  background: rgba(140,150,170,.6); background-clip: padding-box; }
+.table-scroll::-webkit-scrollbar-corner, .modal-card::-webkit-scrollbar-corner { background: transparent; }
 table.data { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.data th, table.data td { padding: 6px 10px; text-align: right; white-space: nowrap; }
 table.data thead th {

@@ -167,7 +167,18 @@
     const row = e.target.closest(".scr-row");
     if (row) analyzeStock(row.dataset.sym);
   });
-  if ($("anaCloseBtn")) $("anaCloseBtn").addEventListener("click", () => $("analyzeModal").classList.add("hidden"));
+  function closeAnalyze() {
+    $("analyzeModal").classList.add("hidden");
+    if (anaChart) { anaChart.destroy(); anaChart = null; }
+  }
+  if ($("anaCloseBtn")) $("anaCloseBtn").addEventListener("click", closeAnalyze);
+  // click outside the card (on the dim backdrop) closes the popup
+  if ($("analyzeModal")) $("analyzeModal").addEventListener("click", (e) => {
+    if (e.target === $("analyzeModal")) closeAnalyze();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !$("analyzeModal").classList.contains("hidden")) closeAnalyze();
+  });
   async function analyzeStock(sym) {
     $("anaTitle").textContent = sym + " · analysis";
     $("anaBody").innerHTML = `<p class="modal-sub">Loading ${esc(sym)}…</p>`;
