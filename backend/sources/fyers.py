@@ -203,8 +203,9 @@ class FyersDataSource(DataSource):
     # ----------------------------------------------------------- screener
     def fetch_quotes(self, tickers: list[str]) -> list[dict]:
         """Live quotes for NSE equities. `tickers` are plain symbols (e.g. SBIN).
-        Resilient: Fyers rejects the whole call if ANY symbol is invalid, so on a
-        failure we split the batch and retry, isolating and skipping bad tickers."""
+        Uses the POST quotes endpoint (quotes_v2, symbols as a list). Resilient:
+        on a batch error it splits & retries, isolating bad tickers; if nothing
+        works it raises the real Fyers error (with code) so the cause is visible."""
         fy = self._model()
         out: list[dict] = []
         errors: list[str] = []
@@ -214,25 +215,33 @@ class FyersDataSource(DataSource):
             raise RuntimeError(errors[-1])
         return out
 
-    def _quotes_into(self, fy, syms, out, errors, batch: int = 20) -> None:
+    def _quotes_into(self, fy, syms, out, errors, batch: int = 40) -> None:
         for i in range(0, len(syms), batch):
             chunk = syms[i:i + batch]
             try:
-                resp = self._check(fy.quotes(data={"symbols": ",".join(chunk)}))
-            except AuthRequired:
-                raise
-            except Exception as e:  # noqa: BLE001 - bad/renamed symbol or size: split & retry
+                resp = fy.quotes_v2(data={"symbols": chunk})   # POST, list of symbols
+            except Exception as e:  # noqa: BLE001 - SDK/transport error
+                resp = {"s": "error", "message": f"{type(e).__name__}: {e}"}
+
+            bad = (not isinstance(resp, dict) or resp.get("s") == "error"
+                   or (resp.get("code", 200) < 0 and not resp.get("d")))
+            if bad:
+                msg = str((resp or {}).get("message") or resp)
+                code = resp.get("code") if isinstance(resp, dict) else None
+                if code in (-8, -15, -16, -17) or "token" in msg.lower() or "authoriz" in msg.lower():
+                    raise AuthRequired(f"Fyers token rejected: {msg}")
                 if len(chunk) == 1:
-                    errors.append(str(e))
-                    continue           # this single symbol is invalid — skip it
+                    errors.append(f"{msg} [code {code}]")
+                    continue
                 mid = len(chunk) // 2
                 self._quotes_into(fy, chunk[:mid], out, errors, batch=len(chunk))
                 self._quotes_into(fy, chunk[mid:], out, errors, batch=len(chunk))
                 continue
+
             for item in resp.get("d", []) or []:
                 v = item.get("v") or {}
                 lp = v.get("lp")
-                if lp in (None, 0, "0"):        # no valid price → skip (don't gate on item['s'])
+                if lp in (None, 0, "0"):        # no valid price → skip
                     continue
                 name = (item.get("n") or v.get("symbol") or "").replace("NSE:", "").replace("-EQ", "")
                 out.append({
