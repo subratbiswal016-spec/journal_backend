@@ -173,6 +173,8 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .sig.flat { background: var(--panel-2); color: var(--muted); }
 .ana-head { display: flex; align-items: center; gap: 12px; margin: 4px 0 14px; }
 .ana-trend { font-size: 18px; font-weight: 700; color: var(--text); }
+.ana-chart { height: 240px; margin: 4px 0 14px; }
+.ana-chart canvas { width: 100% !important; height: 100% !important; }
 .ana-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 18px; margin-bottom: 14px; }
 .ana-row { display: flex; justify-content: space-between; border-bottom: 1px solid var(--line); padding: 6px 0; font-size: 14px; }
 .ana-row span { color: var(--muted); }

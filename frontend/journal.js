@@ -192,6 +192,11 @@
       (d.chg_pct != null ? `<span class="ana-trend ${d.chg_pct >= 0 ? "pos" : "neg"}">${d.chg_pct >= 0 ? "+" : ""}${d.chg_pct}%</span>` : "") +
       `</div>`;
 
+    if (d.chart && (d.chart.price || []).length > 1) {
+      html += sect("📊 " + esc(d.chart.title || "Price")) +
+        `<div class="ana-chart"><canvas id="anaChart"></canvas></div>`;
+    }
+
     if (d.intraday) {
       const vwapCls = d.above_vwap ? "pos" : "neg";
       html += sect("📍 Intraday (5-min)") + `<div class="ana-grid">` +
@@ -218,6 +223,56 @@
     html += sect("📝 Read") + `<ul class="ana-notes">` +
       (d.notes || []).map((n) => `<li>${esc(n)}</li>`).join("") + `</ul>`;
     $("anaBody").innerHTML = html;
+    if (d.chart && (d.chart.price || []).length > 1) drawAnaChart(d.chart, scls);
+  }
+  let anaChart = null;
+  function drawAnaChart(c, scls) {
+    const el = $("anaChart");
+    if (!el || typeof Chart === "undefined") return;
+    if (anaChart) { anaChart.destroy(); anaChart = null; }
+    const line = scls === "bear" ? "#ef5350" : scls === "bull" ? "#26a69a" : "#6ea8fe";
+    const css = getComputedStyle(document.body);
+    const grid = (css.getPropertyValue("--border") || "rgba(255,255,255,.08)").trim();
+    const tick = (css.getPropertyValue("--muted") || "#9aa4b2").trim();
+    const datasets = [{
+      label: "Price", data: c.price, borderColor: line, backgroundColor: line + "22",
+      borderWidth: 2, pointRadius: 0, tension: 0.25, fill: true,
+    }];
+    if (c.kind === "intraday" && c.vwap) datasets.push({
+      label: "VWAP", data: c.vwap, borderColor: "#f5a623", borderWidth: 1.5,
+      borderDash: [5, 4], pointRadius: 0, tension: 0.25, fill: false,
+    });
+    if (c.kind === "daily" && c.ema20) datasets.push({
+      label: "20-EMA", data: c.ema20, borderColor: "#f5a623", borderWidth: 1.5,
+      pointRadius: 0, tension: 0.25, fill: false,
+    });
+    const ann = (c.prev_close != null)
+      ? [{ y: c.prev_close }] : [];
+    const maxTicks = c.kind === "intraday" ? 7 : 8;
+    anaChart = new Chart(el, {
+      type: "line",
+      data: { labels: c.labels, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { display: datasets.length > 1, labels: { color: tick, boxWidth: 12, font: { size: 11 } } },
+          tooltip: { callbacks: { label: (x) => x.dataset.label + ": ₹" + Number(x.parsed.y).toFixed(2) } },
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: tick, maxTicksLimit: maxTicks, font: { size: 10 } } },
+          y: { grid: { color: grid }, ticks: { color: tick, font: { size: 10 }, callback: (v) => "₹" + v } },
+        },
+      },
+    });
+    // prev-close reference line (drawn via a flat dataset for simplicity)
+    if (ann.length && c.prev_close != null) {
+      anaChart.data.datasets.push({
+        label: "Prev close", data: c.price.map(() => c.prev_close),
+        borderColor: tick, borderWidth: 1, borderDash: [2, 3], pointRadius: 0, fill: false,
+      });
+      anaChart.update();
+    }
   }
 
   // ---------------------------------------------------------------- load

@@ -136,6 +136,42 @@ def _vwap(intraday: list[list]) -> float | None:
     return round(num / den, 2) if den else None
 
 
+def _ema_series(values: list[float], period: int) -> list[float | None]:
+    """Running EMA, one value per input point (None until seeded)."""
+    if not values:
+        return []
+    k = 2.0 / (period + 1)
+    out: list[float | None] = []
+    e: float | None = None
+    for i, v in enumerate(values):
+        e = v if e is None else v * k + e * (1 - k)
+        out.append(round(e, 2) if i >= period - 1 else None)
+    return out
+
+
+def _vwap_series(candles: list[list]) -> list[float | None]:
+    """Running (cumulative) VWAP, one value per candle."""
+    out: list[float | None] = []
+    num = den = 0.0
+    for c in candles:
+        if len(c) < 6:
+            out.append(round(num / den, 2) if den else None)
+            continue
+        tp = (float(c[2]) + float(c[3]) + float(c[4])) / 3.0
+        v = float(c[5] or 0)
+        num += tp * v
+        den += v
+        out.append(round(num / den, 2) if den else None)
+    return out
+
+
+def _ist_label(ts, intraday: bool) -> str:
+    from datetime import datetime, timezone, timedelta
+    ist = timezone(timedelta(hours=5, minutes=30))
+    dt = datetime.fromtimestamp(int(ts), ist)
+    return dt.strftime("%H:%M") if intraday else dt.strftime("%d %b")
+
+
 def _today_candles(intraday: list[list]) -> list[list]:
     """Keep only the most recent trading day's candles (by date of the epoch ts)."""
     if not intraday:
@@ -216,6 +252,15 @@ def analyze(symbol: str, daily: list[list], intraday: list[list] | None = None) 
             "i_ema20": round(iema20, 2) if iema20 else None,
             "i_rsi": i_rsi, "intraday": True,
         })
+        # chart: today's 5-min price with a running VWAP overlay
+        out["chart"] = {
+            "kind": "intraday",
+            "title": "Today · 5-min",
+            "labels": [_ist_label(c[0], True) for c in today],
+            "price": [round(float(c[4]), 2) for c in today],
+            "vwap": _vwap_series(today),
+            "prev_close": round(prev_close, 2) if prev_close else None,
+        }
         if vwap:
             notes.append(f"Price ₹{price:,.2f} is {'ABOVE' if price > vwap else 'BELOW'} VWAP (₹{vwap:,.2f}) "
                          + ("— intraday buyers in control." if price > vwap else "— intraday sellers in control."))
@@ -231,6 +276,19 @@ def analyze(symbol: str, daily: list[list], intraday: list[list] | None = None) 
         notes.append("No intraday (5-min) data available yet — showing daily context only.")
         out.setdefault("signal", out.get("daily_trend", "Neutral").replace("Uptrend", "Bullish").replace("Downtrend", "Bearish").replace("Sideways", "Neutral"))
         out.setdefault("trend", out.get("daily_trend", "Sideways"))
+
+    # daily chart (last ~60 sessions) when no intraday series is available
+    if "chart" not in out and len(daily) >= 10:
+        tail = daily[-60:]
+        tcloses = [float(c[4]) for c in tail]
+        out["chart"] = {
+            "kind": "daily",
+            "title": "Last 60 sessions · close",
+            "labels": [_ist_label(c[0], False) if str(c[0]).isdigit() or isinstance(c[0], (int, float)) else str(i)
+                       for i, c in enumerate(tail)],
+            "price": [round(v, 2) for v in tcloses],
+            "ema20": _ema_series(tcloses, 20),
+        }
 
     return out
 
