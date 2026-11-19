@@ -164,6 +164,9 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 #screenerTable td:last-child { text-align: center; }
 .scr-row { cursor: pointer; }
 .scr-row:hover { background: var(--panel-2); }
+#screenerTable th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+#screenerTable th.sortable:hover { color: var(--accent, #6ea8fe); }
+#screenerTable th.sortable.active { color: var(--accent, #6ea8fe); }
 .sig { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 20px; }
 .sig.bull { background: rgba(38,166,154,.18); color: #2fd3c2; }
 .sig.bear { background: rgba(239,83,80,.18); color: #ff7b78; }

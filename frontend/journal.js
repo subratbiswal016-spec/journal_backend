@@ -99,12 +99,33 @@
       if (btn) { btn.disabled = false; btn.textContent = old; }
     }
   }
+  let scrRows = [];                       // last loaded rows (unsorted, server order)
+  let scrColSort = { key: null, dir: -1 }; // -1 = high→low, 1 = low→high
   function renderScreener(d) {
     scrStatus(d.live === false
       ? "⚠️ Demo data — switch the app to the Fyers data source for live stocks."
       : `Live · scanned ${d.scanned} F&amp;O stocks`, false);
+    scrRows = (d.rows || []).slice();
+    drawScreenerRows();
+  }
+  function drawScreenerRows() {
+    let rows = scrRows.slice();
+    const k = scrColSort.key;
+    if (k) {
+      rows.sort((a, b) => {
+        let va = a[k], vb = b[k];
+        if (k === "symbol") return String(va).localeCompare(String(vb)) * scrColSort.dir;
+        return ((Number(va) || 0) - (Number(vb) || 0)) * scrColSort.dir;
+      });
+    }
+    // header arrow indicators
+    document.querySelectorAll("#screenerTable th.sortable").forEach((th) => {
+      const base = th.dataset.label || (th.dataset.label = th.textContent.replace(/[▲▼]\s*$/, "").trim());
+      th.textContent = base + (th.dataset.key === k ? (scrColSort.dir === -1 ? " ▼" : " ▲") : "");
+      th.classList.toggle("active", th.dataset.key === k);
+    });
     const tb = $("screenerTable").querySelector("tbody");
-    tb.innerHTML = (d.rows || []).map((r, i) => {
+    tb.innerHTML = rows.map((r, i) => {
       const cc = r.chg_pct >= 0 ? "pos" : "neg";
       const gc = r.gap_pct >= 0 ? "pos" : "neg";
       return `<tr class="scr-row" data-sym="${esc(r.symbol)}" title="${esc(r.why || "")}">
@@ -131,6 +152,15 @@
       loadScreener();
     }));
   if ($("scrRefresh")) $("scrRefresh").addEventListener("click", loadScreener);
+
+  // ---- click a column header to sort the loaded rows (high→low, toggle low→high) ----
+  document.querySelectorAll("#screenerTable th.sortable").forEach((th) =>
+    th.addEventListener("click", () => {
+      const key = th.dataset.key;
+      if (scrColSort.key === key) scrColSort.dir *= -1;      // same column → flip direction
+      else scrColSort = { key, dir: key === "symbol" ? 1 : -1 }; // new column → numbers high→low, names A→Z
+      drawScreenerRows();
+    }));
 
   // ---- per-stock analysis (trend + momentum) on row click ----
   if ($("screenerTable")) $("screenerTable").addEventListener("click", (e) => {

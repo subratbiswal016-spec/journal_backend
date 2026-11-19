@@ -242,8 +242,16 @@
       <div id="scrStatus" class="jnote hidden"></div>
       <div class="table-scroll" style="max-height:600px">
         <table id="screenerTable" class="data">
-          <thead><tr><th>#</th><th style="text-align:left">Symbol</th><th>LTP</th>
-            <th>% Chg</th><th>Gap %</th><th>Day Range %</th><th>Volume</th><th>Signal</th></tr></thead>
+          <thead><tr>
+            <th>#</th>
+            <th class="sortable" data-key="symbol" style="text-align:left">Symbol</th>
+            <th class="sortable" data-key="ltp">LTP</th>
+            <th class="sortable" data-key="chg_pct">% Chg</th>
+            <th class="sortable" data-key="gap_pct">Gap %</th>
+            <th class="sortable" data-key="range_pct">Day Range %</th>
+            <th class="sortable" data-key="volume">Volume</th>
+            <th>Signal</th>
+          </tr></thead>
           <tbody></tbody>
         </table>
         <p class="modal-sub" style="margin-top:6px">💡 Tap any row for a full trend &amp; momentum analysis of that stock.</p>
