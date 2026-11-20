@@ -114,7 +114,7 @@
   let scrBusy = false;
   let scrRows = [];                       // rows currently shown (after client filter)
   let scrAllRows = [];                    // full fetched set (filtered locally)
-  let scrLive = null, scrScanned = 0, scrWarming = 0;
+  let scrLive = null, scrScanned = 0, scrCovered = 0, scrStale = 0, scrWarming = 0;
   let scrColSort = { key: null, dir: -1 }; // -1 = high→low, 1 = low→high
   // --- client-side filter predicates (mirror backend/screener.py) ---
   const SCR_NEAR = 0.3, SCR_52W = 2.5, SCR_GAP = 0.5;
@@ -150,10 +150,21 @@
     scrAllRows = (d.rows || []).slice();   // full fetched set (filter locally)
     scrLive = d.live;
     scrScanned = d.scanned;
+    scrCovered = d.covered != null ? d.covered : (d.rows || []).length;
+    scrStale = d.stale_secs || 0;
     scrWarming = d.warming || 0;
     applyFilters();                        // filter + draw without re-fetching
     if (typeof scrResetCountdown === "function") scrResetCountdown();
+    // while the background scanner is still filling the universe, poll the
+    // (cheap, no-Fyers-call) snapshot every few seconds so the table fills fast
+    if (scrWarmPoll) { clearTimeout(scrWarmPoll); scrWarmPoll = null; }
+    const stillWarming = scrLive !== false && (scrCovered < scrScanned || scrWarming > 0);
+    const onScreener = $("viewScreener") && !$("viewScreener").classList.contains("hidden");
+    if (stillWarming && onScreener && !document.hidden) {
+      scrWarmPoll = setTimeout(() => loadScreener({ auto: true }), 3000);
+    }
   }
+  let scrWarmPoll = null;
   function applyFilters() {
     const active = [...scrFilters].filter((f) => SCR_PRED[f]);
     let rows;
@@ -174,10 +185,17 @@
     const auto = mktOpen ? " · 🔄 15s" : " · ⏸ paused (market closed)";
     const nF = active.length;
     const head = scrLive === false ? "⚠️ Demo data" : "Live";
-    let msg = `${head} · scanned ${scrScanned}`;
-    msg += nF ? ` · <b>${rows.length} match ${nF} filter${nF > 1 ? "s" : ""}</b>` : ` stocks`;
+    // coverage: how much of the universe the background scanner has loaded
+    let cov = "";
+    if (scrLive !== false && scrCovered < scrScanned) {
+      cov = ` · ⏳ loading ${scrCovered}/${scrScanned}`;
+    } else if (scrLive !== false && scrStale > 25) {
+      cov = ` · updated ${scrStale}s ago`;
+    }
+    let msg = `${head} · ${scrScanned} stocks${cov}`;
+    if (nF) msg = `${head} · <b>${rows.length} match ${nF} filter${nF > 1 ? "s" : ""}</b> of ${scrScanned}${cov}`;
     const pendingHist = nF && [...scrFilters].some((f) => SCR_HIST.has(f)) && scrWarming;
-    if (pendingHist) msg += ` · ⏳ building daily levels… ${scrWarming} left`;
+    if (pendingHist) msg += ` · building daily levels… ${scrWarming} left`;
     scrStatus(msg + auto, false);
   }
   function drawScreenerRows() {

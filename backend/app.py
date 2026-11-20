@@ -201,12 +201,113 @@ def api_snapshot(
 # Daily cache of history-derived levels (52W/pivots/avg-vol). These barely
 # change intraday, so we fetch each symbol once a day and reuse it.
 _HIST_LEVELS: dict[str, tuple[str, dict]] = {}
-_HIST_WARM_PER_REQ = 25   # max symbols to fetch history for in one request
+_HIST_WARM_PER_REQ = 20   # max symbols to fetch history for in one request
+
+
+# ----------------------------------------------------------------------
+#  Background screener scanner
+#  One thread continuously refreshes depth quotes for the selected index,
+#  paced by the shared Fyers rate limiter (5/sec + 50/min). The endpoint
+#  just serves the latest snapshot — ZERO Fyers calls per request — so the
+#  UI can auto-refresh every 15s without ever hitting the plan limit.
+# ----------------------------------------------------------------------
+class _ScreenerScanner:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.quotes: dict[str, dict] = {}     # ticker -> normalized quote
+        self.updated: dict[str, float] = {}   # ticker -> epoch seconds
+        self.index = screener.DEFAULT_INDEX
+        self.universe = screener.scan_universe(self.index)
+        self.thread: Optional[threading.Thread] = None
+        self.running = False
+        self.last_error: Optional[str] = None
+        self.auth_required = False
+
+    def set_index(self, index: str):
+        if index not in screener.INDEXES:
+            return
+        with self.lock:
+            if index != self.index:
+                self.index = index
+                self.universe = screener.scan_universe(index)
+
+    def ensure_started(self):
+        if self.running:
+            return
+        self.running = True
+        self.thread = threading.Thread(target=self._run, daemon=True, name="screener-scan")
+        self.thread.start()
+
+    def snapshot(self):
+        """Quotes for the CURRENT universe only, plus coverage info."""
+        with self.lock:
+            uni = list(self.universe)
+            quotes = [self.quotes[t] for t in uni if t in self.quotes]
+            oldest = min((self.updated[t] for t in uni if t in self.updated), default=None)
+        return quotes, len(uni), oldest
+
+    def _run(self):
+        while self.running:
+            try:
+                with self.lock:
+                    uni = list(self.universe)
+                    idx = self.index
+                if _source.name != "fyers":
+                    time.sleep(2.0)
+                    continue
+                for t in uni:
+                    if not self.running:
+                        break
+                    with self.lock:
+                        if self.index != idx:   # universe changed mid-cycle → restart
+                            break
+                    try:
+                        q = _source.fetch_one_quote(t)   # rate-limited inside
+                        self.auth_required = False
+                        if q:
+                            with self.lock:
+                                self.quotes[t] = q
+                                self.updated[t] = time.time()
+                            self.last_error = None
+                    except AuthRequired:
+                        self.auth_required = True
+                        time.sleep(3.0)
+                        break
+                    except Exception as e:  # noqa: BLE001 - skip symbol, keep scanning
+                        self.last_error = str(e)
+                # tiny idle between full cycles (rate limiter does the real pacing)
+                time.sleep(0.5)
+            except Exception as e:  # noqa: BLE001 - never let the thread die
+                self.last_error = str(e)
+                time.sleep(2.0)
+
+
+_scanner = _ScreenerScanner()
+
+
+_HIST_WARMING: set[str] = set()      # symbols currently being fetched
+_HIST_WARM_LOCK = threading.Lock()
+
+
+def _warm_hist_async(symbols: list[str], today: str):
+    """Fetch daily levels for the given symbols in the background (paced by the
+    shared rate limiter), caching them. Never blocks the request."""
+    def run():
+        for s in symbols:
+            try:
+                candles = _source.fetch_history(s, resolution="D", days=400)
+                lv = screener.levels_from_history(candles)
+            except Exception:  # noqa: BLE001 - skip, retry next refresh
+                lv = None
+            _HIST_LEVELS[s] = (today, lv or {})
+            with _HIST_WARM_LOCK:
+                _HIST_WARMING.discard(s)
+    threading.Thread(target=run, daemon=True, name="hist-warm").start()
 
 
 def _hist_levels_for(symbols: list[str], today: str) -> tuple[dict, int]:
-    """Return cached {sym: levels} for symbols, warming up to N uncached ones.
-    Second value = how many are still missing (cache still warming)."""
+    """Read cached {sym: levels} instantly and kick off a background warm-up for
+    any uncached symbols. Second value = how many are still missing."""
     out, missing = {}, []
     for s in symbols:
         cached = _HIST_LEVELS.get(s)
@@ -215,16 +316,13 @@ def _hist_levels_for(symbols: list[str], today: str) -> tuple[dict, int]:
                 out[s] = cached[1]
         else:
             missing.append(s)
-    for s in missing[:_HIST_WARM_PER_REQ]:
-        try:
-            candles = _source.fetch_history(s, resolution="D", days=400)
-            lv = screener.levels_from_history(candles)
-        except Exception:  # noqa: BLE001 - skip this symbol, retry next refresh
-            lv = None
-        _HIST_LEVELS[s] = (today, lv or {})
-        if lv:
-            out[s] = lv
-    return out, max(0, len(missing) - _HIST_WARM_PER_REQ)
+    if missing:
+        with _HIST_WARM_LOCK:
+            todo = [s for s in missing if s not in _HIST_WARMING][:_HIST_WARM_PER_REQ]
+            _HIST_WARMING.update(todo)
+        if todo:
+            _warm_hist_async(todo, today)
+    return out, len(missing)
 
 
 @app.get("/api/screener/meta")
@@ -237,29 +335,30 @@ def api_screener_meta():
 @app.get("/api/screener")
 def api_screener(sort: str = Query("volume"), index: str = Query(screener.DEFAULT_INDEX),
                  hist: int = Query(0)):
-    """Scan the chosen index and return ALL rows with their metrics + daily
-    levels attached. Filtering is done client-side (no API call per filter);
-    `hist=1` (set only while a history-backed filter is active) warms and
-    includes the 52W/pivot/avg-volume levels needed by those filters."""
-    symbols = screener.scan_universe(index)
-    if _source.name == "fyers":
-        try:
-            quotes = _source.fetch_quotes(symbols)
-            hist_map, warming = ({}, 0)
-            if hist:
-                hist_map, warming = _hist_levels_for(symbols, _today_ist())
-            rows = screener.screen(quotes, hist_map, [], sort)   # no server filtering
-            return {"available": True, "sort": sort, "index": index,
-                    "scanned": len(quotes), "rows": rows,
-                    "warming": warming, "live": True}
-        except AuthRequired:
-            raise HTTPException(status_code=401, detail="login_required")
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(status_code=502, detail=f"Screener failed: {e}")
-    # mock / other sources → demo data so the UI still works
-    rows = screener.demo_screen(index, [], sort)
+    """Serve the latest background snapshot for the chosen index (no Fyers call
+    per request). Filtering is client-side; `hist=1` (set only while a history
+    filter is active) warms/includes the 52W/pivot/avg-volume levels."""
+    if _source.name != "fyers":
+        rows = screener.demo_screen(index, [], sort)
+        return {"available": True, "sort": sort, "index": index,
+                "scanned": len(screener.scan_universe(index)), "covered": len(rows),
+                "rows": rows, "warming": 0, "stale_secs": 0, "live": False}
+
+    _scanner.set_index(index)
+    _scanner.ensure_started()
+    if _scanner.auth_required:
+        raise HTTPException(status_code=401, detail="login_required")
+
+    quotes, total, oldest = _scanner.snapshot()
+    hist_map, warming = ({}, 0)
+    if hist:
+        hist_map, warming = _hist_levels_for(screener.scan_universe(index), _today_ist())
+    rows = screener.screen(quotes, hist_map, [], sort)
+    stale = int(time.time() - oldest) if oldest else 0
     return {"available": True, "sort": sort, "index": index,
-            "scanned": len(symbols), "rows": rows, "warming": 0, "live": False}
+            "scanned": total, "covered": len(quotes), "rows": rows,
+            "warming": warming, "stale_secs": stale,
+            "scan_error": _scanner.last_error if not quotes else None, "live": True}
 
 
 @app.get("/api/screener/analyze")

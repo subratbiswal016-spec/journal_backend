@@ -39,23 +39,40 @@ from .base import AuthRequired, DataSource, FuturesRow, OptionChain, StrikeRow
 IST = timezone(timedelta(hours=5, minutes=30))
 
 # --- account-wide API rate limiter --------------------------------------
-# Fyers' Standard plan allows 5 requests/second. We pace every quote/history
-# call through one shared gate (~4/sec) so parallel screener scans and the
-# dashboard never burst past the limit and get throttled.
+# Fyers' Standard plan caps calls at 5/second AND 50/minute. We enforce BOTH
+# across every Fyers call (dashboard + screener) so we never get throttled.
+# Short bursts up to the per-second cap are allowed (snappy dashboard), while
+# sustained load is held under the per-minute cap (the background scanner).
+import collections  # noqa: E402
+
 _RL_LOCK = threading.Lock()
-_RL_NEXT = 0.0
-_RL_MIN_INTERVAL = 0.25  # seconds between calls → ~4 req/sec (headroom under 5)
+_RL_CALLS: "collections.deque[float]" = collections.deque()
+_RL_LAST = 0.0
+_RL_MIN_GAP = 0.25  # min seconds between any two calls → ≤4/sec (hard cap)
+_RL_PER_MIN = 45    # headroom under 50/min
 
 
 def _rate_limit():
-    """Block just long enough to keep the global call rate under the plan limit."""
-    global _RL_NEXT
-    with _RL_LOCK:
-        now = time.monotonic()
-        slot = _RL_NEXT if _RL_NEXT > now else now
-        _RL_NEXT = slot + _RL_MIN_INTERVAL
-        wait = slot - now
-    if wait > 0:
+    """Block until a call fits under BOTH the min-spacing (≤4/sec) and the
+    per-minute cap (≤45/min)."""
+    global _RL_LAST
+    while True:
+        with _RL_LOCK:
+            now = time.monotonic()
+            while _RL_CALLS and now - _RL_CALLS[0] > 60.0:
+                _RL_CALLS.popleft()
+            gap_ok = (now - _RL_LAST) >= _RL_MIN_GAP
+            min_ok = len(_RL_CALLS) < _RL_PER_MIN
+            if gap_ok and min_ok:
+                _RL_LAST = now
+                _RL_CALLS.append(now)
+                return
+            waits = []
+            if not gap_ok:
+                waits.append(_RL_MIN_GAP - (now - _RL_LAST))
+            if not min_ok:
+                waits.append(60.0 - (now - _RL_CALLS[0]))
+            wait = max(0.02, min(waits)) if waits else 0.05
         time.sleep(wait)
 _MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
            "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
@@ -223,45 +240,46 @@ class FyersDataSource(DataSource):
         return self._check(self._model().positions())
 
     # ----------------------------------------------------------- screener
-    def fetch_quotes(self, tickers: list[str]) -> list[dict]:
-        """Live quotes for NSE equities via the `depth` endpoint (one symbol per
-        call, but the one that works on this account — the /quotes endpoint is
-        blocked). Parallelized so scanning the universe stays fast; per-symbol
-        failures are skipped (best effort)."""
-        from concurrent.futures import ThreadPoolExecutor
+    def fetch_one_quote(self, ticker: str) -> dict | None:
+        """One rate-limited live quote via the `depth` endpoint (the /quotes
+        endpoint is blocked on this account). Returns a normalized dict or None.
+        Used one-at-a-time by the background screener scanner."""
         fy = self._model()        # raises AuthRequired if the token is invalid
+        sym = f"NSE:{ticker}-EQ"
+        _rate_limit()             # respect 5/sec + 50/min account caps
+        resp = fy.depth(data={"symbol": sym, "ohlcv_flag": 1})
+        if not isinstance(resp, dict):
+            return None
+        if resp.get("s") == "error":
+            msg = str(resp.get("message", ""))
+            if resp.get("code") in (-8, -15, -16, -17) or "token" in msg.lower():
+                raise AuthRequired(f"Fyers token rejected: {msg}")
+            return None
+        d = (resp.get("d") or {}).get(sym) or {}
+        g = lambda *ks: next((d[k] for k in ks if d.get(k) not in (None, "")), None)
+        ltp = g("ltp", "lp")
+        if ltp in (None, 0):
+            return None
+        ch = g("ch")
+        prev = (ltp - ch) if ch is not None else g("prev_close_price", "c")
+        return {"ticker": ticker, "ltp": ltp,
+                "open": g("o", "open_price"), "high": g("h", "high_price"),
+                "low": g("l", "low_price"), "prev_close": prev,
+                "volume": g("v", "volume", "vol")}
 
-        def one(t: str):
-            sym = f"NSE:{t}-EQ"
+    def fetch_quotes(self, tickers: list[str]) -> list[dict]:
+        """Live quotes for a list of NSE equities (best effort; failures skipped).
+        Kept for compatibility — the screener now scans in the background."""
+        out = []
+        for t in tickers:
             try:
-                _rate_limit()   # stay under the plan's 5 req/sec
-                resp = fy.depth(data={"symbol": sym, "ohlcv_flag": 1})
-                if not isinstance(resp, dict) or resp.get("s") == "error":
-                    return None
-                d = (resp.get("d") or {}).get(sym) or {}
-                g = lambda *ks: next((d[k] for k in ks if d.get(k) not in (None, "")), None)
-                ltp = g("ltp", "lp")
-                if ltp in (None, 0):
-                    return None
-                ch = g("ch")
-                # prefer ltp - change (unambiguous); fall back to the close field
-                if ch is not None:
-                    prev = ltp - ch
-                else:
-                    prev = g("prev_close_price", "c")
-                return {"ticker": t, "ltp": ltp,
-                        "open": g("o", "open_price"), "high": g("h", "high_price"),
-                        "low": g("l", "low_price"), "prev_close": prev,
-                        "volume": g("v", "volume", "vol")}
+                q = self.fetch_one_quote(t)
+            except AuthRequired:
+                raise
             except Exception:  # noqa: BLE001 - best effort per symbol
-                return None
-
-        out: list[dict] = []
-        # A few workers is plenty — the shared rate limiter paces the calls.
-        with ThreadPoolExecutor(max_workers=6) as ex:
-            for r in ex.map(one, tickers):
-                if r:
-                    out.append(r)
+                q = None
+            if q:
+                out.append(q)
         if not out:
             raise RuntimeError("No quotes returned from the depth endpoint "
                                "(check the Fyers token / data permissions).")
