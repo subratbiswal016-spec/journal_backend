@@ -164,6 +164,33 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 #screenerTable td:last-child { text-align: center; }
 .scr-row { cursor: pointer; }
 .scr-row:hover { background: var(--panel-2); }
+/* --- screener filter bar (ScanX-style chips) --- */
+.scr-index { padding: 7px 10px; border-radius: 8px; font-size: 13px; font-weight: 600;
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line); cursor: pointer; }
+.scr-filterbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0 2px; }
+.scr-chip { position: relative; }
+.scr-chip-btn { display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  padding: 7px 12px; border-radius: 9px; font-size: 13px; font-weight: 600;
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line); white-space: nowrap; }
+.scr-chip-btn:hover { border-color: var(--accent, #6ea8fe); }
+.scr-chip.active .scr-chip-btn { border-color: var(--accent, #6ea8fe); color: var(--accent, #6ea8fe); }
+.scr-chip.open .scr-chip-caret { transform: rotate(180deg); }
+.scr-chip-caret { font-size: 10px; opacity: .7; transition: transform .15s; }
+.scr-chip-count { background: var(--accent, #6ea8fe); color: #fff; font-size: 11px; font-weight: 700;
+  min-width: 18px; text-align: center; padding: 1px 5px; border-radius: 10px; }
+.scr-chip-menu { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; min-width: 210px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.35); }
+.scr-chk { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 7px;
+  font-size: 13px; cursor: pointer; color: var(--text); }
+.scr-chk:hover { background: var(--panel-2); }
+.scr-chk input { width: 15px; height: 15px; accent-color: var(--accent, #6ea8fe); cursor: pointer; }
+.scr-hist { color: var(--muted); font-weight: 600; font-size: 10px; }
+.scr-clear { margin-left: auto; padding: 7px 12px; border-radius: 9px; font-size: 13px; font-weight: 600;
+  background: transparent; color: var(--call); border: 1px solid rgba(239,83,80,.4); cursor: pointer; }
+.scr-clear:hover { background: rgba(239,83,80,.1); }
+#screenerTable td:last-child .sig { margin: 1px 2px 1px 0; }
+
 .scr-countdown { display: inline-flex; align-items: center; min-width: 58px; justify-content: center;
   font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
   padding: 6px 10px; border-radius: 8px; color: var(--muted);

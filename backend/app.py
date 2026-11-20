@@ -198,21 +198,68 @@ def api_snapshot(
     return JSONResponse(payload)
 
 
+# Daily cache of history-derived levels (52W/pivots/avg-vol). These barely
+# change intraday, so we fetch each symbol once a day and reuse it.
+_HIST_LEVELS: dict[str, tuple[str, dict]] = {}
+_HIST_WARM_PER_REQ = 25   # max symbols to fetch history for in one request
+
+
+def _hist_levels_for(symbols: list[str], today: str) -> tuple[dict, int]:
+    """Return cached {sym: levels} for symbols, warming up to N uncached ones.
+    Second value = how many are still missing (cache still warming)."""
+    out, missing = {}, []
+    for s in symbols:
+        cached = _HIST_LEVELS.get(s)
+        if cached and cached[0] == today:
+            if cached[1]:
+                out[s] = cached[1]
+        else:
+            missing.append(s)
+    for s in missing[:_HIST_WARM_PER_REQ]:
+        try:
+            candles = _source.fetch_history(s, resolution="D", days=400)
+            lv = screener.levels_from_history(candles)
+        except Exception:  # noqa: BLE001 - skip this symbol, retry next refresh
+            lv = None
+        _HIST_LEVELS[s] = (today, lv or {})
+        if lv:
+            out[s] = lv
+    return out, max(0, len(missing) - _HIST_WARM_PER_REQ)
+
+
+@app.get("/api/screener/meta")
+def api_screener_meta():
+    """Filter groups + index list so the UI can build its controls."""
+    return {"groups": screener.FILTER_GROUPS, "indexes": screener.index_list(),
+            "default_index": screener.DEFAULT_INDEX}
+
+
 @app.get("/api/screener")
-def api_screener(sort: str = Query("movers")):
-    """Rank liquid F&O stocks by intraday factors (data, not advice)."""
+def api_screener(sort: str = Query("volume"), index: str = Query(screener.DEFAULT_INDEX),
+                 filters: str = Query("")):
+    """Scan the chosen index and apply filters (data, not advice)."""
+    flist = [f for f in (filters or "").split(",") if f]
+    need_hist = bool(set(flist) & screener.HIST_FILTERS)
+    symbols = screener.scan_universe(index)
     if _source.name == "fyers":
         try:
-            quotes = _source.fetch_quotes(screener.scan_universe())
-            return {"available": True, "sort": sort, "scanned": len(quotes),
-                    "rows": screener.rank_quotes(quotes, sort), "live": True}
+            quotes = _source.fetch_quotes(symbols)
+            hist_map, warming = ({}, 0)
+            if need_hist:
+                hist_map, warming = _hist_levels_for(symbols, _today_ist())
+            rows = screener.screen(quotes, hist_map, flist, sort)
+            return {"available": True, "sort": sort, "index": index, "filters": flist,
+                    "scanned": len(quotes), "matched": len(rows), "rows": rows,
+                    "warming": warming, "live": True}
         except AuthRequired:
             raise HTTPException(status_code=401, detail="login_required")
         except Exception as e:  # noqa: BLE001
             raise HTTPException(status_code=502, detail=f"Screener failed: {e}")
     # mock / other sources → demo data so the UI still works
-    return {"available": True, "sort": sort, "scanned": len(screener.FO_STOCKS),
-            "rows": screener.demo_rows(sort), "live": False}
+    rows = screener.demo_screen(index, flist, sort)
+    return {"available": True, "sort": sort, "index": index, "filters": flist,
+            "scanned": len(symbols), "matched": len(rows), "rows": rows,
+            "warming": 0, "live": False}
 
 
 @app.get("/api/screener/analyze")

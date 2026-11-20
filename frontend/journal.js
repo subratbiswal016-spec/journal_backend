@@ -73,7 +73,10 @@
   }
 
   // ---------------------------------------------------------- screener
-  let scrSort = "movers";
+  let scrSort = "volume";
+  let scrIndex = "nifty50";
+  let scrFilters = new Set();      // active filter ids
+  let scrMeta = null;              // { groups, indexes, default_index }
   function scrStatus(msg, err) {
     const s = $("scrStatus");
     if (!s) return;
@@ -84,13 +87,17 @@
   }
   async function loadScreener(opts) {
     const silent = opts && opts.auto;        // auto-refresh: no spinner / button flicker
+    if (!scrMeta) await scrInitControls();   // build chips/index picker on first load
     if (silent && scrBusy) return;           // skip a tick if a load is still in flight
     scrBusy = true;
     if (!silent) showLoading(true);
     const btn = $("scrRefresh"), old = btn ? btn.textContent : "";
     if (!silent && btn) { btn.disabled = true; btn.textContent = "Scanning…"; }
     try {
-      const r = await fetch("/api/screener?sort=" + encodeURIComponent(scrSort));
+      const qs = "?sort=" + encodeURIComponent(scrSort) +
+                 "&index=" + encodeURIComponent(scrIndex) +
+                 "&filters=" + encodeURIComponent([...scrFilters].join(","));
+      const r = await fetch("/api/screener" + qs);
       if (r.status === 401) { scrStatus("Log in to Fyers on the Dashboard tab to load live stocks.", true); return; }
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || "screener failed");
@@ -108,10 +115,14 @@
   let scrColSort = { key: null, dir: -1 }; // -1 = high→low, 1 = low→high
   function renderScreener(d) {
     const mktOpen = typeof marketStatus !== "function" || marketStatus().open;
-    const auto = mktOpen ? " · 🔄 auto-refresh 15s" : " · ⏸ auto-refresh paused (market closed)";
-    scrStatus(d.live === false
-      ? "⚠️ Demo data — switch the app to the Fyers data source for live stocks." + auto
-      : `Live · scanned ${d.scanned} F&amp;O stocks${auto}`, false);
+    const auto = mktOpen ? " · 🔄 15s" : " · ⏸ paused (market closed)";
+    const nF = scrFilters.size;
+    const head = d.live === false ? "⚠️ Demo data" : "Live";
+    let msg = `${head} · scanned ${d.scanned}`;
+    msg += nF ? ` · <b>${d.matched} match ${nF} filter${nF > 1 ? "s" : ""}</b>`
+              : ` stocks`;
+    if (d.warming) msg += ` · ⏳ building daily levels… ${d.warming} left`;
+    scrStatus(msg + auto, false);
     scrRows = (d.rows || []).slice();
     drawScreenerRows();
     if (typeof scrResetCountdown === "function") scrResetCountdown();
@@ -144,21 +155,107 @@
         <td class="${gc}">${r.gap_pct >= 0 ? "+" : ""}${r.gap_pct}%</td>
         <td>${r.range_pct}%</td>
         <td>${fmt(r.volume)}</td>
-        <td>${sigBadge(r.signal)}</td>
+        <td style="text-align:left">${matchCell(r)}</td>
       </tr>`;
     }).join("");
+  }
+  function matchCell(r) {
+    if (r.matched && r.matched.length) {
+      return r.matched.map((m) => `<span class="sig ${tagCls(m)}">${esc(m)}</span>`).join(" ");
+    }
+    return sigBadge(r.signal);
+  }
+  function tagCls(label) {
+    if (/bull|rise|r[123] break|new (week|month)|52w high|gap up|near day high/i.test(label)) return "bull";
+    if (/bear|fall|52w low|new (week|month) low|gap down|near day low/i.test(label)) return "bear";
+    return "flat";
   }
   function sigBadge(sig) {
     const s = sig || "Neutral";
     const cls = /bull/i.test(s) ? "bull" : /bear/i.test(s) ? "bear" : "flat";
     return `<span class="sig ${cls}">${esc(s)}</span>`;
   }
-  document.querySelectorAll("#scrSortSeg button").forEach((b) =>
-    b.addEventListener("click", () => {
-      scrSort = b.dataset.s;
-      document.querySelectorAll("#scrSortSeg button").forEach((x) => x.classList.toggle("active", x === b));
+
+  // ---- build the filter chips + index picker from /api/screener/meta ----
+  async function scrInitControls() {
+    if (scrMeta) return;
+    try {
+      scrMeta = await (await fetch("/api/screener/meta")).json();
+    } catch (e) { return; }
+    scrIndex = scrMeta.default_index || scrIndex;
+    // index picker
+    const sel = $("scrIndex");
+    if (sel) {
+      sel.innerHTML = (scrMeta.indexes || []).map((ix) =>
+        `<option value="${esc(ix.id)}">${esc(ix.label)} (${ix.count})</option>`).join("");
+      sel.value = scrIndex;
+      sel.addEventListener("change", () => { scrIndex = sel.value; loadScreener(); });
+    }
+    // filter chips
+    const bar = $("scrFilterBar");
+    if (bar) {
+      bar.innerHTML = (scrMeta.groups || []).map((g) => `
+        <div class="scr-chip" data-group="${esc(g.id)}">
+          <button class="scr-chip-btn" type="button">
+            <span>${g.icon || ""} ${esc(g.label)}</span>
+            <span class="scr-chip-count" hidden>0</span>
+            <span class="scr-chip-caret">▾</span>
+          </button>
+          <div class="scr-chip-menu" hidden>
+            ${g.filters.map((f) => `
+              <label class="scr-chk"><input type="checkbox" value="${esc(f.id)}"/>
+                <span>${esc(f.label)}${f.hist ? ' <small class="scr-hist">•daily</small>' : ""}</span></label>`).join("")}
+          </div>
+        </div>`).join("") +
+        `<button id="scrClear" class="scr-clear" type="button" hidden>✕ Clear</button>`;
+      bar.addEventListener("click", onFilterBarClick);
+      bar.addEventListener("change", onFilterChange);
+    }
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest(".scr-chip")) closeAllChipMenus();
+    });
+  }
+  function closeAllChipMenus() {
+    document.querySelectorAll(".scr-chip-menu").forEach((m) => (m.hidden = true));
+    document.querySelectorAll(".scr-chip").forEach((c) => c.classList.remove("open"));
+  }
+  function onFilterBarClick(e) {
+    const btn = e.target.closest(".scr-chip-btn");
+    if (btn) {
+      const chip = btn.closest(".scr-chip");
+      const menu = chip.querySelector(".scr-chip-menu");
+      const wasOpen = !menu.hidden;
+      closeAllChipMenus();
+      menu.hidden = wasOpen;
+      chip.classList.toggle("open", !wasOpen);
+      return;
+    }
+    if (e.target.id === "scrClear") {
+      scrFilters.clear();
+      document.querySelectorAll("#scrFilterBar input[type=checkbox]").forEach((c) => (c.checked = false));
+      syncChipCounts();
       loadScreener();
-    }));
+    }
+  }
+  function onFilterChange(e) {
+    const cb = e.target.closest("input[type=checkbox]");
+    if (!cb) return;
+    if (cb.checked) scrFilters.add(cb.value); else scrFilters.delete(cb.value);
+    syncChipCounts();
+    loadScreener();
+  }
+  function syncChipCounts() {
+    document.querySelectorAll("#scrFilterBar .scr-chip").forEach((chip) => {
+      const n = chip.querySelectorAll("input[type=checkbox]:checked").length;
+      const badge = chip.querySelector(".scr-chip-count");
+      badge.textContent = n;
+      badge.hidden = n === 0;
+      chip.classList.toggle("active", n > 0);
+    });
+    const clear = $("scrClear");
+    if (clear) clear.hidden = scrFilters.size === 0;
+  }
+
   if ($("scrRefresh")) $("scrRefresh").addEventListener("click", () => loadScreener());
 
   // ---- auto-refresh the screener every 15s with a live countdown.

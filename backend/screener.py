@@ -35,14 +35,65 @@ FO_STOCKS = [
 ]
 
 # How many names to scan per refresh. Fyers' Standard plan caps API calls at
-# 5/sec, so scanning the full list every 15s isn't possible — we scan the most
+# 5/sec, so scanning a big list every 15s isn't possible — we scan the most
 # liquid top-slice, which finishes comfortably inside the auto-refresh window.
 SCAN_LIMIT = 50
 
+# --- index universes you can point the scanner at -----------------------
+NIFTY50 = [
+    "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "INFY", "SBIN", "HINDUNILVR",
+    "ITC", "LT", "KOTAKBANK", "AXISBANK", "BHARTIARTL", "BAJFINANCE", "ASIANPAINT",
+    "MARUTI", "HCLTECH", "SUNPHARMA", "TITAN", "ULTRACEMCO", "WIPRO", "NESTLEIND",
+    "ONGC", "NTPC", "POWERGRID", "TATAMOTORS", "TATASTEEL", "JSWSTEEL", "ADANIENT",
+    "ADANIPORTS", "COALINDIA", "GRASIM", "HINDALCO", "BRITANNIA", "CIPLA", "DRREDDY",
+    "DIVISLAB", "EICHERMOT", "HEROMOTOCO", "BAJAJ-AUTO", "BAJAJFINSV", "INDUSINDBK",
+    "M&M", "TECHM", "APOLLOHOSP", "BPCL", "HDFCLIFE", "SBILIFE", "TATACONSUM",
+    "LTIM", "SHRIRAMFIN",
+]
+BANKNIFTY = [
+    "HDFCBANK", "ICICIBANK", "SBIN", "KOTAKBANK", "AXISBANK", "INDUSINDBK",
+    "BANKBARODA", "PNB", "FEDERALBNK", "IDFCFIRSTB", "AUBANK", "BANDHANBNK",
+]
+SENSEX = [
+    "RELIANCE", "TCS", "HDFCBANK", "ICICIBANK", "INFY", "SBIN", "HINDUNILVR",
+    "ITC", "LT", "KOTAKBANK", "AXISBANK", "BHARTIARTL", "BAJFINANCE", "ASIANPAINT",
+    "MARUTI", "HCLTECH", "SUNPHARMA", "TITAN", "ULTRACEMCO", "NESTLEIND", "NTPC",
+    "POWERGRID", "TATAMOTORS", "TATASTEEL", "JSWSTEEL", "M&M", "TECHM", "BAJAJFINSV",
+    "INDUSINDBK", "WIPRO",
+]
 
-def scan_universe() -> list[str]:
-    """The slice of FO_STOCKS scanned each refresh (kept under the rate limit)."""
-    return FO_STOCKS[:SCAN_LIMIT]
+
+def _dedup(seq: list[str]) -> list[str]:
+    seen, out = set(), []
+    for s in seq:
+        if s not in seen:
+            seen.add(s); out.append(s)
+    return out
+
+
+# Nifty 100 ≈ Nifty 50 + the next most-liquid F&O names (approximate).
+NIFTY100 = _dedup(NIFTY50 + FO_STOCKS)[:100]
+
+INDEXES = {
+    "nifty50":   {"label": "Nifty 50",    "symbols": NIFTY50},
+    "banknifty": {"label": "Bank Nifty",  "symbols": BANKNIFTY},
+    "sensex":    {"label": "Sensex",      "symbols": SENSEX},
+    "nifty100":  {"label": "Nifty 100",   "symbols": NIFTY100},
+    "fno":       {"label": "F&O Stocks",  "symbols": FO_STOCKS},
+}
+DEFAULT_INDEX = "nifty50"
+
+
+def index_list() -> list[dict]:
+    """[{id,label,count}] for the index/universe picker."""
+    return [{"id": k, "label": v["label"], "count": len(v["symbols"])}
+            for k, v in INDEXES.items()]
+
+
+def scan_universe(index: str = DEFAULT_INDEX) -> list[str]:
+    """Symbols to scan for the chosen index, capped to the rate-limit budget."""
+    syms = INDEXES.get(index, INDEXES[DEFAULT_INDEX])["symbols"]
+    return syms[:SCAN_LIMIT]
 
 
 def fyers_symbol(ticker: str) -> str:
@@ -74,12 +125,19 @@ def _metrics(q: dict) -> dict | None:
     range_pct = round((hi - lo) / prev * 100, 2) if hi > 0 and lo > 0 else 0.0
     pos = (ltp - lo) / (hi - lo) if hi > lo else 0.5     # position in day range
     signal, why = _quote_signal(chg_pct, pos, ltp > op if op else False)
+    # distance from today's extremes (for rise/fall-from & near-high/low filters)
+    from_high_pct = round((hi - ltp) / hi * 100, 2) if hi > 0 else None
+    from_low_pct = round((ltp - lo) / lo * 100, 2) if lo > 0 else None
     return {
         "symbol": q.get("ticker") or "",
         "ltp": round(ltp, 2),
+        "day_high": round(hi, 2), "day_low": round(lo, 2),
+        "open": round(op, 2), "prev_close": round(prev, 2),
         "chg_pct": chg_pct,
         "gap_pct": gap_pct,
         "range_pct": range_pct,
+        "from_high_pct": from_high_pct,
+        "from_low_pct": from_low_pct,
         "volume": int(vol),
         "signal": signal,
         "why": why,
@@ -102,6 +160,170 @@ def rank_quotes(quotes: list[dict], sort: str = "movers", limit: int = 60) -> li
     key = _SORTS.get(sort, _SORTS["movers"])
     rows.sort(key=key)
     return rows[:limit]
+
+
+# ======================================================================
+#  Filters (ScanX-style). Each filter is a predicate over a metrics dict.
+#  Filters marked hist=True need the daily history cache (52W levels,
+#  pivots, average volume) — everything else works off the live quote.
+# ======================================================================
+NEAR_PCT = 0.3        # "near the day high/low" tolerance (%)
+NEAR_52W_PCT = 2.5    # "near the 52-week high/low" tolerance (%)
+GAP_PCT = 0.5         # gap up/down threshold (%)
+
+# UI groups → the chips shown above the table.
+FILTER_GROUPS = [
+    {"id": "signal", "label": "Signal", "icon": "📈", "filters": [
+        {"id": "bullish", "label": "Bullish"},
+        {"id": "bearish", "label": "Bearish"},
+    ]},
+    {"id": "high", "label": "Near High", "icon": "🔺", "filters": [
+        {"id": "near_day_high", "label": "Near Day High"},
+        {"id": "new_week_high", "label": "New Weekly High", "hist": True},
+        {"id": "new_month_high", "label": "New Monthly High", "hist": True},
+        {"id": "near_52w_high", "label": "Near 52W High", "hist": True},
+    ]},
+    {"id": "low", "label": "Near Low", "icon": "🔻", "filters": [
+        {"id": "near_day_low", "label": "Near Day Low"},
+        {"id": "new_week_low", "label": "New Weekly Low", "hist": True},
+        {"id": "new_month_low", "label": "New Monthly Low", "hist": True},
+        {"id": "near_52w_low", "label": "Near 52W Low", "hist": True},
+    ]},
+    {"id": "risefall", "label": "Rise & Fall", "icon": "⇅", "filters": [
+        {"id": "fall1", "label": "1% Fall from High"},
+        {"id": "fall2_5", "label": "2.5% Fall from High"},
+        {"id": "fall5", "label": "5% Fall from High"},
+        {"id": "rise1", "label": "1% Rise from Low"},
+        {"id": "rise2_5", "label": "2.5% Rise from Low"},
+        {"id": "rise5", "label": "5% Rise from Low"},
+    ]},
+    {"id": "volume", "label": "Volume", "icon": "📊", "filters": [
+        {"id": "high_volume", "label": "High Volume"},
+        {"id": "unusual_volume", "label": "Unusual Volume", "hist": True},
+    ]},
+    {"id": "pivot", "label": "Pivots & Gap", "icon": "🎯", "filters": [
+        {"id": "r1", "label": "R1 Breakout", "hist": True},
+        {"id": "r2", "label": "R2 Breakout", "hist": True},
+        {"id": "r3", "label": "R3 Breakout", "hist": True},
+        {"id": "gap_up", "label": "Gap Up"},
+        {"id": "gap_down", "label": "Gap Down"},
+    ]},
+]
+
+
+def _ge(v, t):  # safe ">=" that tolerates None
+    return v is not None and v >= t
+
+
+# predicate(metrics) -> bool
+_PREDICATES = {
+    "bullish":        lambda m: m["chg_pct"] > 0.3,
+    "bearish":        lambda m: m["chg_pct"] < -0.3,
+    "near_day_high":  lambda m: m["from_high_pct"] is not None and m["from_high_pct"] <= NEAR_PCT,
+    "near_day_low":   lambda m: m["from_low_pct"] is not None and m["from_low_pct"] <= NEAR_PCT,
+    "fall1":          lambda m: _ge(m["from_high_pct"], 1.0),
+    "fall2_5":        lambda m: _ge(m["from_high_pct"], 2.5),
+    "fall5":          lambda m: _ge(m["from_high_pct"], 5.0),
+    "rise1":          lambda m: _ge(m["from_low_pct"], 1.0),
+    "rise2_5":        lambda m: _ge(m["from_low_pct"], 2.5),
+    "rise5":          lambda m: _ge(m["from_low_pct"], 5.0),
+    "gap_up":         lambda m: m["gap_pct"] >= GAP_PCT,
+    "gap_down":       lambda m: m["gap_pct"] <= -GAP_PCT,
+    "high_volume":    lambda m: bool(m.get("high_volume")),
+    # history-backed
+    "near_52w_high":  lambda m: _ge(m.get("high_52w"), 0) and m["ltp"] >= m["high_52w"] * (1 - NEAR_52W_PCT / 100),
+    "near_52w_low":   lambda m: _ge(m.get("low_52w"), 0) and m["ltp"] <= m["low_52w"] * (1 + NEAR_52W_PCT / 100),
+    "new_week_high":  lambda m: _ge(m.get("week_high"), 0) and m["ltp"] >= m["week_high"],
+    "new_month_high": lambda m: _ge(m.get("month_high"), 0) and m["ltp"] >= m["month_high"],
+    "new_week_low":   lambda m: _ge(m.get("week_low"), 0) and m["ltp"] <= m["week_low"],
+    "new_month_low":  lambda m: _ge(m.get("month_low"), 0) and m["ltp"] <= m["month_low"],
+    "unusual_volume": lambda m: _ge(m.get("avg_vol20"), 1) and m["volume"] >= m["avg_vol20"],
+    "r1":             lambda m: _ge(m.get("r1"), 0) and m["ltp"] > m["r1"],
+    "r2":             lambda m: _ge(m.get("r2"), 0) and m["ltp"] > m["r2"],
+    "r3":             lambda m: _ge(m.get("r3"), 0) and m["ltp"] > m["r3"],
+}
+_LABELS = {f["id"]: f["label"] for g in FILTER_GROUPS for f in g["filters"]}
+HIST_FILTERS = {f["id"] for g in FILTER_GROUPS for f in g["filters"] if f.get("hist")}
+
+
+def levels_from_history(candles: list[list]) -> dict | None:
+    """Static-for-the-day levels from daily candles [ts,o,h,l,c,v]:
+    52-week & period highs/lows, classic pivots (prev day), 20-day avg volume."""
+    rows = [c for c in (candles or []) if c and len(c) >= 6]
+    if len(rows) < 20:
+        return None
+    highs = [float(c[2]) for c in rows]
+    lows = [float(c[3]) for c in rows]
+    vols = [float(c[5] or 0) for c in rows]
+    # period highs/lows EXCLUDING today's forming candle (rows[-1])
+    done_h, done_l, done_v = highs[:-1], lows[:-1], vols[:-1]
+    def hi(n): return max(done_h[-n:]) if done_h else None
+    def lo(n): return min(done_l[-n:]) if done_l else None
+    # classic pivots from the last completed day
+    ph, pl, pc = highs[-2], lows[-2], float(rows[-2][4])
+    piv = (ph + pl + pc) / 3.0
+    r1 = 2 * piv - pl; s1 = 2 * piv - ph
+    r2 = piv + (ph - pl); s2 = piv - (ph - pl)
+    r3 = ph + 2 * (piv - pl); s3 = pl - 2 * (ph - piv)
+    avg20 = sum(done_v[-20:]) / min(20, len(done_v)) if done_v else None
+    return {
+        "high_52w": round(max(done_h[-252:]), 2) if done_h else None,
+        "low_52w": round(min(done_l[-252:]), 2) if done_l else None,
+        "week_high": round(hi(5), 2) if done_h else None,
+        "week_low": round(lo(5), 2) if done_l else None,
+        "month_high": round(hi(21), 2) if done_h else None,
+        "month_low": round(lo(21), 2) if done_l else None,
+        "pivot": round(piv, 2),
+        "r1": round(r1, 2), "r2": round(r2, 2), "r3": round(r3, 2),
+        "s1": round(s1, 2), "s2": round(s2, 2), "s3": round(s3, 2),
+        "avg_vol20": round(avg20) if avg20 else None,
+    }
+
+
+def screen(quotes: list[dict], hist_map: dict[str, dict] | None = None,
+           filters: list[str] | None = None, sort: str = "volume",
+           limit: int = 80) -> list[dict]:
+    """Compute metrics, merge daily levels, apply filters (OR with matched
+    tags), and sort. No active filters → every stock, ranked."""
+    hist_map = hist_map or {}
+    rows = []
+    for q in quotes:
+        m = _metrics(q)
+        if not m:
+            continue
+        lv = hist_map.get(m["symbol"])
+        if lv:
+            m.update(lv)
+        rows.append(m)
+    # "High Volume" = top 20% of the scanned set by volume
+    if rows:
+        vols = sorted((m["volume"] for m in rows), reverse=True)
+        thr = vols[max(0, int(len(vols) * 0.2) - 1)] if vols else 0
+        for m in rows:
+            m["high_volume"] = m["volume"] >= thr and m["volume"] > 0
+
+    active = [f for f in (filters or []) if f in _PREDICATES]
+    if active:
+        out = []
+        for m in rows:
+            matched = [_LABELS[f] for f in active if _safe_pred(f, m)]
+            if matched:
+                m["matched"] = matched
+                out.append(m)
+        rows = out
+    else:
+        for m in rows:
+            m["matched"] = []
+
+    rows.sort(key=_SORTS.get(sort, _SORTS["volume"]))
+    return rows[:limit]
+
+
+def _safe_pred(fid: str, m: dict) -> bool:
+    try:
+        return bool(_PREDICATES[fid](m))
+    except Exception:  # noqa: BLE001 - a missing field just means "no match"
+        return False
 
 
 def _ema(values: list[float], period: int) -> float | None:
@@ -326,19 +548,33 @@ def demo_analysis(symbol: str) -> dict:
     return analyze(symbol, daily, intr)
 
 
-def demo_rows(sort: str = "movers", limit: int = 60) -> list[dict]:
-    """Synthetic screener rows so the UI works without a Fyers login (demo mode)."""
+def demo_screen(index: str = DEFAULT_INDEX, filters: list[str] | None = None,
+                sort: str = "volume", limit: int = 80) -> list[dict]:
+    """Synthetic screener (quotes + daily levels) so the whole filter UI works
+    without a Fyers login — routed through the real screen() for parity."""
     import random
-    rng = random.Random(42)
-    rows = []
-    for t in FO_STOCKS:
-        chg = round(rng.uniform(-6, 6), 2)
-        pos = rng.uniform(0, 1)
-        signal, why = _quote_signal(chg, pos, chg > 0)
-        rows.append({"symbol": t, "ltp": round(rng.uniform(100, 4000), 2),
-                     "chg_pct": chg, "gap_pct": round(rng.uniform(-2.5, 2.5), 2),
-                     "range_pct": round(rng.uniform(0.6, 7), 2),
-                     "volume": rng.randint(100_000, 25_000_000),
-                     "signal": signal, "why": why})
-    rows.sort(key=_SORTS.get(sort, _SORTS["movers"]))
-    return rows[:limit]
+    quotes, hist = [], {}
+    for t in scan_universe(index):
+        rng = random.Random(sum(ord(c) for c in t))
+        prev = round(rng.uniform(100, 4000), 2)
+        chg = rng.uniform(-6, 6)
+        ltp = round(prev * (1 + chg / 100), 2)
+        op = round(prev * (1 + rng.uniform(-2.5, 2.5) / 100), 2)
+        hi = round(max(ltp, op) * (1 + rng.uniform(0, 3) / 100), 2)
+        lo = round(min(ltp, op) * (1 - rng.uniform(0, 3) / 100), 2)
+        quotes.append({"ticker": t, "ltp": ltp, "open": op, "high": hi, "low": lo,
+                       "prev_close": prev, "volume": rng.randint(100_000, 25_000_000)})
+        hist[t] = {
+            "high_52w": round(hi * (1 + rng.uniform(0, 0.25)), 2),
+            "low_52w": round(lo * (1 - rng.uniform(0, 0.25)), 2),
+            "week_high": round(hi * (1 + rng.uniform(-0.02, 0.03)), 2),
+            "week_low": round(lo * (1 + rng.uniform(-0.03, 0.02)), 2),
+            "month_high": round(hi * (1 + rng.uniform(0, 0.06)), 2),
+            "month_low": round(lo * (1 - rng.uniform(0, 0.06)), 2),
+            "pivot": round((hi + lo + prev) / 3, 2),
+            "r1": round(prev * (1 + rng.uniform(-0.5, 1.5) / 100), 2),
+            "r2": round(prev * (1 + rng.uniform(1, 3) / 100), 2),
+            "r3": round(prev * (1 + rng.uniform(2.5, 4.5) / 100), 2),
+            "avg_vol20": rng.randint(100_000, 20_000_000),
+        }
+    return screen(quotes, hist, filters, sort, limit)
