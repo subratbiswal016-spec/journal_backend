@@ -164,6 +164,12 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 #screenerTable td:last-child { text-align: center; }
 .scr-row { cursor: pointer; }
 .scr-row:hover { background: var(--panel-2); }
+.scr-countdown { display: inline-flex; align-items: center; min-width: 58px; justify-content: center;
+  font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+  padding: 6px 10px; border-radius: 8px; color: var(--muted);
+  background: var(--panel-2); border: 1px solid var(--line); }
+.scr-countdown.due { color: var(--accent, #6ea8fe); }
+.scr-countdown.paused { color: var(--muted); opacity: .75; }
 #screenerTable th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
 #screenerTable th.sortable:hover { color: var(--accent, #6ea8fe); }
 #screenerTable th.sortable.active { color: var(--accent, #6ea8fe); }

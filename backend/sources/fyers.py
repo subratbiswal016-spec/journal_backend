@@ -27,6 +27,8 @@ Setup (one time):
 from __future__ import annotations
 
 import json
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -35,6 +37,26 @@ from .. import config
 from .base import AuthRequired, DataSource, FuturesRow, OptionChain, StrikeRow
 
 IST = timezone(timedelta(hours=5, minutes=30))
+
+# --- account-wide API rate limiter --------------------------------------
+# Fyers' Standard plan allows 5 requests/second. We pace every quote/history
+# call through one shared gate (~4/sec) so parallel screener scans and the
+# dashboard never burst past the limit and get throttled.
+_RL_LOCK = threading.Lock()
+_RL_NEXT = 0.0
+_RL_MIN_INTERVAL = 0.25  # seconds between calls → ~4 req/sec (headroom under 5)
+
+
+def _rate_limit():
+    """Block just long enough to keep the global call rate under the plan limit."""
+    global _RL_NEXT
+    with _RL_LOCK:
+        now = time.monotonic()
+        slot = _RL_NEXT if _RL_NEXT > now else now
+        _RL_NEXT = slot + _RL_MIN_INTERVAL
+        wait = slot - now
+    if wait > 0:
+        time.sleep(wait)
 _MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN",
            "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 
@@ -212,6 +234,7 @@ class FyersDataSource(DataSource):
         def one(t: str):
             sym = f"NSE:{t}-EQ"
             try:
+                _rate_limit()   # stay under the plan's 5 req/sec
                 resp = fy.depth(data={"symbol": sym, "ohlcv_flag": 1})
                 if not isinstance(resp, dict) or resp.get("s") == "error":
                     return None
@@ -234,7 +257,8 @@ class FyersDataSource(DataSource):
                 return None
 
         out: list[dict] = []
-        with ThreadPoolExecutor(max_workers=10) as ex:
+        # A few workers is plenty — the shared rate limiter paces the calls.
+        with ThreadPoolExecutor(max_workers=6) as ex:
             for r in ex.map(one, tickers):
                 if r:
                     out.append(r)
@@ -249,6 +273,7 @@ class FyersDataSource(DataSource):
         fy = self._model()
         end = _ist_now().date()
         start = end - timedelta(days=days)
+        _rate_limit()   # share the account's 5 req/sec budget
         resp = self._check(fy.history(data={
             "symbol": f"NSE:{ticker}-EQ", "resolution": resolution, "date_format": "1",
             "range_from": start.isoformat(), "range_to": end.isoformat(),

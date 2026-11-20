@@ -114,6 +114,7 @@
       : `Live · scanned ${d.scanned} F&amp;O stocks${auto}`, false);
     scrRows = (d.rows || []).slice();
     drawScreenerRows();
+    if (typeof scrResetCountdown === "function") scrResetCountdown();
   }
   function drawScreenerRows() {
     let rows = scrRows.slice();
@@ -160,16 +161,32 @@
     }));
   if ($("scrRefresh")) $("scrRefresh").addEventListener("click", () => loadScreener());
 
-  // ---- auto-refresh the screener every 15s (only when the tab is open,
-  //      visible, and the market is live — otherwise prices don't change) ----
-  const SCR_REFRESH_MS = 15000;
+  // ---- auto-refresh the screener every 15s with a live countdown.
+  //      Only runs when the tab is open, visible, and the market is live. ----
+  const SCR_REFRESH_SEC = 15;
+  let scrCountdown = SCR_REFRESH_SEC;
+  function scrSetTimer(txt, cls) {
+    const el = $("scrCountdown");
+    if (!el) return;
+    el.textContent = txt;
+    el.className = "scr-countdown" + (cls ? " " + cls : "");
+  }
+  function scrResetCountdown() { scrCountdown = SCR_REFRESH_SEC; }
   setInterval(() => {
     const v = $("viewScreener");
-    if (!v || v.classList.contains("hidden")) return;   // not on the Screener tab
-    if (document.hidden) return;                         // browser tab in background
-    if (typeof marketStatus === "function" && !marketStatus().open) return; // market closed
-    loadScreener({ auto: true });
-  }, SCR_REFRESH_MS);
+    if (!v || v.classList.contains("hidden")) return;          // not on the Screener tab
+    const marketOpen = typeof marketStatus !== "function" || marketStatus().open;
+    if (!marketOpen) { scrSetTimer("⏸ paused", "paused"); scrResetCountdown(); return; }
+    if (document.hidden) { scrSetTimer("⏸ paused", "paused"); return; } // keep counter, resume on focus
+    scrCountdown -= 1;
+    if (scrCountdown <= 0) {
+      scrSetTimer("⟳ …", "due");
+      scrResetCountdown();
+      loadScreener({ auto: true });
+    } else {
+      scrSetTimer("⏱ " + scrCountdown + "s");
+    }
+  }, 1000);
 
   // ---- click a column header to sort the loaded rows (high→low, toggle low→high) ----
   document.querySelectorAll("#screenerTable th.sortable").forEach((th) =>

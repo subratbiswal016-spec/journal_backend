@@ -203,7 +203,7 @@ def api_screener(sort: str = Query("movers")):
     """Rank liquid F&O stocks by intraday factors (data, not advice)."""
     if _source.name == "fyers":
         try:
-            quotes = _source.fetch_quotes(screener.FO_STOCKS)
+            quotes = _source.fetch_quotes(screener.scan_universe())
             return {"available": True, "sort": sort, "scanned": len(quotes),
                     "rows": screener.rank_quotes(quotes, sort), "live": True}
         except AuthRequired:

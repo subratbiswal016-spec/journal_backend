@@ -34,6 +34,16 @@ FO_STOCKS = [
     "COLPAL", "BERGEPAINT", "PAGEIND", "INDIGO", "MFSL", "MCX", "ANGELONE",
 ]
 
+# How many names to scan per refresh. Fyers' Standard plan caps API calls at
+# 5/sec, so scanning the full list every 15s isn't possible — we scan the most
+# liquid top-slice, which finishes comfortably inside the auto-refresh window.
+SCAN_LIMIT = 50
+
+
+def scan_universe() -> list[str]:
+    """The slice of FO_STOCKS scanned each refresh (kept under the rate limit)."""
+    return FO_STOCKS[:SCAN_LIMIT]
+
 
 def fyers_symbol(ticker: str) -> str:
     return f"NSE:{ticker}-EQ"
