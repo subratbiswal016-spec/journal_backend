@@ -236,30 +236,30 @@ def api_screener_meta():
 
 @app.get("/api/screener")
 def api_screener(sort: str = Query("volume"), index: str = Query(screener.DEFAULT_INDEX),
-                 filters: str = Query("")):
-    """Scan the chosen index and apply filters (data, not advice)."""
-    flist = [f for f in (filters or "").split(",") if f]
-    need_hist = bool(set(flist) & screener.HIST_FILTERS)
+                 hist: int = Query(0)):
+    """Scan the chosen index and return ALL rows with their metrics + daily
+    levels attached. Filtering is done client-side (no API call per filter);
+    `hist=1` (set only while a history-backed filter is active) warms and
+    includes the 52W/pivot/avg-volume levels needed by those filters."""
     symbols = screener.scan_universe(index)
     if _source.name == "fyers":
         try:
             quotes = _source.fetch_quotes(symbols)
             hist_map, warming = ({}, 0)
-            if need_hist:
+            if hist:
                 hist_map, warming = _hist_levels_for(symbols, _today_ist())
-            rows = screener.screen(quotes, hist_map, flist, sort)
-            return {"available": True, "sort": sort, "index": index, "filters": flist,
-                    "scanned": len(quotes), "matched": len(rows), "rows": rows,
+            rows = screener.screen(quotes, hist_map, [], sort)   # no server filtering
+            return {"available": True, "sort": sort, "index": index,
+                    "scanned": len(quotes), "rows": rows,
                     "warming": warming, "live": True}
         except AuthRequired:
             raise HTTPException(status_code=401, detail="login_required")
         except Exception as e:  # noqa: BLE001
             raise HTTPException(status_code=502, detail=f"Screener failed: {e}")
     # mock / other sources → demo data so the UI still works
-    rows = screener.demo_screen(index, flist, sort)
-    return {"available": True, "sort": sort, "index": index, "filters": flist,
-            "scanned": len(symbols), "matched": len(rows), "rows": rows,
-            "warming": 0, "live": False}
+    rows = screener.demo_screen(index, [], sort)
+    return {"available": True, "sort": sort, "index": index,
+            "scanned": len(symbols), "rows": rows, "warming": 0, "live": False}
 
 
 @app.get("/api/screener/analyze")

@@ -94,9 +94,10 @@
     const btn = $("scrRefresh"), old = btn ? btn.textContent : "";
     if (!silent && btn) { btn.disabled = true; btn.textContent = "Scanning…"; }
     try {
+      const needHist = [...scrFilters].some((f) => SCR_HIST.has(f)) ? 1 : 0;
       const qs = "?sort=" + encodeURIComponent(scrSort) +
                  "&index=" + encodeURIComponent(scrIndex) +
-                 "&filters=" + encodeURIComponent([...scrFilters].join(","));
+                 "&hist=" + needHist;
       const r = await fetch("/api/screener" + qs);
       if (r.status === 401) { scrStatus("Log in to Fyers on the Dashboard tab to load live stocks.", true); return; }
       const d = await r.json();
@@ -111,21 +112,73 @@
     }
   }
   let scrBusy = false;
-  let scrRows = [];                       // last loaded rows (unsorted, server order)
+  let scrRows = [];                       // rows currently shown (after client filter)
+  let scrAllRows = [];                    // full fetched set (filtered locally)
+  let scrLive = null, scrScanned = 0, scrWarming = 0;
   let scrColSort = { key: null, dir: -1 }; // -1 = high→low, 1 = low→high
+  // --- client-side filter predicates (mirror backend/screener.py) ---
+  const SCR_NEAR = 0.3, SCR_52W = 2.5, SCR_GAP = 0.5;
+  const SCR_PRED = {
+    bullish: (m) => m.chg_pct > 0.3,
+    bearish: (m) => m.chg_pct < -0.3,
+    near_day_high: (m) => m.from_high_pct != null && m.from_high_pct <= SCR_NEAR,
+    near_day_low: (m) => m.from_low_pct != null && m.from_low_pct <= SCR_NEAR,
+    fall1: (m) => m.from_high_pct != null && m.from_high_pct >= 1,
+    fall2_5: (m) => m.from_high_pct != null && m.from_high_pct >= 2.5,
+    fall5: (m) => m.from_high_pct != null && m.from_high_pct >= 5,
+    rise1: (m) => m.from_low_pct != null && m.from_low_pct >= 1,
+    rise2_5: (m) => m.from_low_pct != null && m.from_low_pct >= 2.5,
+    rise5: (m) => m.from_low_pct != null && m.from_low_pct >= 5,
+    gap_up: (m) => m.gap_pct >= SCR_GAP,
+    gap_down: (m) => m.gap_pct <= -SCR_GAP,
+    high_volume: (m) => !!m.high_volume,
+    near_52w_high: (m) => m.high_52w > 0 && m.ltp >= m.high_52w * (1 - SCR_52W / 100),
+    near_52w_low: (m) => m.low_52w > 0 && m.ltp <= m.low_52w * (1 + SCR_52W / 100),
+    new_week_high: (m) => m.week_high > 0 && m.ltp >= m.week_high,
+    new_month_high: (m) => m.month_high > 0 && m.ltp >= m.month_high,
+    new_week_low: (m) => m.week_low > 0 && m.ltp <= m.week_low,
+    new_month_low: (m) => m.month_low > 0 && m.ltp <= m.month_low,
+    unusual_volume: (m) => m.avg_vol20 > 0 && m.volume >= m.avg_vol20,
+    r1: (m) => m.r1 > 0 && m.ltp > m.r1,
+    r2: (m) => m.r2 > 0 && m.ltp > m.r2,
+    r3: (m) => m.r3 > 0 && m.ltp > m.r3,
+  };
+  let SCR_LABELS = {};               // id -> label (from meta)
+  let SCR_HIST = new Set();          // ids needing daily history (from meta)
+
   function renderScreener(d) {
+    scrAllRows = (d.rows || []).slice();   // full fetched set (filter locally)
+    scrLive = d.live;
+    scrScanned = d.scanned;
+    scrWarming = d.warming || 0;
+    applyFilters();                        // filter + draw without re-fetching
+    if (typeof scrResetCountdown === "function") scrResetCountdown();
+  }
+  function applyFilters() {
+    const active = [...scrFilters].filter((f) => SCR_PRED[f]);
+    let rows;
+    if (active.length) {
+      rows = [];
+      for (const m of scrAllRows) {
+        const matched = active.filter((f) => { try { return SCR_PRED[f](m); } catch (e) { return false; } })
+                              .map((f) => SCR_LABELS[f] || f);
+        if (matched.length) { m.matched = matched; rows.push(m); }
+      }
+    } else {
+      rows = scrAllRows.map((m) => { m.matched = []; return m; });
+    }
+    scrRows = rows;
+    drawScreenerRows();
+    // status line
     const mktOpen = typeof marketStatus !== "function" || marketStatus().open;
     const auto = mktOpen ? " · 🔄 15s" : " · ⏸ paused (market closed)";
-    const nF = scrFilters.size;
-    const head = d.live === false ? "⚠️ Demo data" : "Live";
-    let msg = `${head} · scanned ${d.scanned}`;
-    msg += nF ? ` · <b>${d.matched} match ${nF} filter${nF > 1 ? "s" : ""}</b>`
-              : ` stocks`;
-    if (d.warming) msg += ` · ⏳ building daily levels… ${d.warming} left`;
+    const nF = active.length;
+    const head = scrLive === false ? "⚠️ Demo data" : "Live";
+    let msg = `${head} · scanned ${scrScanned}`;
+    msg += nF ? ` · <b>${rows.length} match ${nF} filter${nF > 1 ? "s" : ""}</b>` : ` stocks`;
+    const pendingHist = nF && [...scrFilters].some((f) => SCR_HIST.has(f)) && scrWarming;
+    if (pendingHist) msg += ` · ⏳ building daily levels… ${scrWarming} left`;
     scrStatus(msg + auto, false);
-    scrRows = (d.rows || []).slice();
-    drawScreenerRows();
-    if (typeof scrResetCountdown === "function") scrResetCountdown();
   }
   function drawScreenerRows() {
     let rows = scrRows.slice();
@@ -183,6 +236,11 @@
       scrMeta = await (await fetch("/api/screener/meta")).json();
     } catch (e) { return; }
     scrIndex = scrMeta.default_index || scrIndex;
+    // label + history-flag maps for client-side filtering
+    (scrMeta.groups || []).forEach((g) => g.filters.forEach((f) => {
+      SCR_LABELS[f.id] = f.label;
+      if (f.hist) SCR_HIST.add(f.id);
+    }));
     // index picker
     const sel = $("scrIndex");
     if (sel) {
@@ -234,7 +292,7 @@
       scrFilters.clear();
       document.querySelectorAll("#scrFilterBar input[type=checkbox]").forEach((c) => (c.checked = false));
       syncChipCounts();
-      loadScreener();
+      applyFilters();                      // client-side only — no API call
     }
   }
   function onFilterChange(e) {
@@ -242,7 +300,11 @@
     if (!cb) return;
     if (cb.checked) scrFilters.add(cb.value); else scrFilters.delete(cb.value);
     syncChipCounts();
-    loadScreener();
+    applyFilters();                        // filter the data we already have — no fetch
+    // one-time fetch only if a history filter is on but its levels aren't loaded yet
+    const needHist = [...scrFilters].some((f) => SCR_HIST.has(f));
+    const haveLevels = scrAllRows.some((m) => m.high_52w != null);
+    if (needHist && !haveLevels && !scrBusy) loadScreener();
   }
   function syncChipCounts() {
     document.querySelectorAll("#scrFilterBar .scr-chip").forEach((chip) => {
