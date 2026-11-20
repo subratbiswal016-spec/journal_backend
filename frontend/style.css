@@ -191,6 +191,9 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .scr-clear:hover { background: rgba(239,83,80,.1); }
 #screenerTable td:last-child .sig { margin: 1px 2px 1px 0; }
 
+.scr-auto { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600;
+  color: var(--text); cursor: pointer; user-select: none; padding: 6px 4px; }
+.scr-auto input { width: 15px; height: 15px; accent-color: var(--accent, #6ea8fe); cursor: pointer; }
 .scr-countdown { display: inline-flex; align-items: center; min-width: 58px; justify-content: center;
   font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
   padding: 6px 10px; border-radius: 8px; color: var(--muted);

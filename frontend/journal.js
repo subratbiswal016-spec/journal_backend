@@ -158,9 +158,10 @@
     // while the background scanner is still filling the universe, poll the
     // (cheap, no-Fyers-call) snapshot every few seconds so the table fills fast
     if (scrWarmPoll) { clearTimeout(scrWarmPoll); scrWarmPoll = null; }
+    const autoOn = !$("scrAuto") || $("scrAuto").checked;
     const stillWarming = scrLive !== false && (scrCovered < scrScanned || scrWarming > 0);
     const onScreener = $("viewScreener") && !$("viewScreener").classList.contains("hidden");
-    if (stillWarming && onScreener && !document.hidden) {
+    if (autoOn && stillWarming && onScreener && !document.hidden) {
       scrWarmPoll = setTimeout(() => loadScreener({ auto: true }), 3000);
     }
   }
@@ -337,6 +338,11 @@
   }
 
   if ($("scrRefresh")) $("scrRefresh").addEventListener("click", () => loadScreener());
+  if ($("scrAuto")) $("scrAuto").addEventListener("change", () => {
+    scrResetCountdown();
+    if ($("scrAuto").checked) loadScreener();   // resume immediately when turned on
+    else scrSetTimer("⏸ off", "paused");
+  });
 
   // ---- auto-refresh the screener every 15s with a live countdown.
   //      Only runs when the tab is open, visible, and the market is live. ----
@@ -349,9 +355,11 @@
     el.className = "scr-countdown" + (cls ? " " + cls : "");
   }
   function scrResetCountdown() { scrCountdown = SCR_REFRESH_SEC; }
+  function scrAutoOn() { const c = $("scrAuto"); return !c || c.checked; }
   setInterval(() => {
     const v = $("viewScreener");
     if (!v || v.classList.contains("hidden")) return;          // not on the Screener tab
+    if (!scrAutoOn()) { scrSetTimer("⏸ off", "paused"); scrResetCountdown(); return; } // Auto toggled off
     const marketOpen = typeof marketStatus !== "function" || marketStatus().open;
     if (!marketOpen) { scrSetTimer("⏸ paused", "paused"); scrResetCountdown(); return; }
     if (document.hidden) { scrSetTimer("⏸ paused", "paused"); return; } // keep counter, resume on focus
