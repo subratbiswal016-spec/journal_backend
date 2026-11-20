@@ -82,10 +82,13 @@
     s.innerHTML = msg;
     s.classList.remove("hidden");
   }
-  async function loadScreener() {
-    showLoading(true);
+  async function loadScreener(opts) {
+    const silent = opts && opts.auto;        // auto-refresh: no spinner / button flicker
+    if (silent && scrBusy) return;           // skip a tick if a load is still in flight
+    scrBusy = true;
+    if (!silent) showLoading(true);
     const btn = $("scrRefresh"), old = btn ? btn.textContent : "";
-    if (btn) { btn.disabled = true; btn.textContent = "Scanning…"; }
+    if (!silent && btn) { btn.disabled = true; btn.textContent = "Scanning…"; }
     try {
       const r = await fetch("/api/screener?sort=" + encodeURIComponent(scrSort));
       if (r.status === 401) { scrStatus("Log in to Fyers on the Dashboard tab to load live stocks.", true); return; }
@@ -93,18 +96,22 @@
       if (!r.ok) throw new Error(d.detail || "screener failed");
       renderScreener(d);
     } catch (e) {
-      scrStatus("Could not load screener: " + e.message, true);
+      if (!silent) scrStatus("Could not load screener: " + e.message, true);
     } finally {
-      showLoading(false);
-      if (btn) { btn.disabled = false; btn.textContent = old; }
+      scrBusy = false;
+      if (!silent) showLoading(false);
+      if (!silent && btn) { btn.disabled = false; btn.textContent = old; }
     }
   }
+  let scrBusy = false;
   let scrRows = [];                       // last loaded rows (unsorted, server order)
   let scrColSort = { key: null, dir: -1 }; // -1 = high→low, 1 = low→high
   function renderScreener(d) {
+    const mktOpen = typeof marketStatus !== "function" || marketStatus().open;
+    const auto = mktOpen ? " · 🔄 auto-refresh 15s" : " · ⏸ auto-refresh paused (market closed)";
     scrStatus(d.live === false
-      ? "⚠️ Demo data — switch the app to the Fyers data source for live stocks."
-      : `Live · scanned ${d.scanned} F&amp;O stocks`, false);
+      ? "⚠️ Demo data — switch the app to the Fyers data source for live stocks." + auto
+      : `Live · scanned ${d.scanned} F&amp;O stocks${auto}`, false);
     scrRows = (d.rows || []).slice();
     drawScreenerRows();
   }
@@ -151,7 +158,18 @@
       document.querySelectorAll("#scrSortSeg button").forEach((x) => x.classList.toggle("active", x === b));
       loadScreener();
     }));
-  if ($("scrRefresh")) $("scrRefresh").addEventListener("click", loadScreener);
+  if ($("scrRefresh")) $("scrRefresh").addEventListener("click", () => loadScreener());
+
+  // ---- auto-refresh the screener every 15s (only when the tab is open,
+  //      visible, and the market is live — otherwise prices don't change) ----
+  const SCR_REFRESH_MS = 15000;
+  setInterval(() => {
+    const v = $("viewScreener");
+    if (!v || v.classList.contains("hidden")) return;   // not on the Screener tab
+    if (document.hidden) return;                         // browser tab in background
+    if (typeof marketStatus === "function" && !marketStatus().open) return; // market closed
+    loadScreener({ auto: true });
+  }, SCR_REFRESH_MS);
 
   // ---- click a column header to sort the loaded rows (high→low, toggle low→high) ----
   document.querySelectorAll("#screenerTable th.sortable").forEach((th) =>
