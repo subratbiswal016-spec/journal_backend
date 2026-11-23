@@ -31,9 +31,30 @@ from .journal import csvimport as jcsv, sync as jsync, dhan as jdhan
 
 _IST = timezone(timedelta(hours=5, minutes=30))
 
+# NSE equity hours (IST) and weekday holidays — mirror of the frontend list.
+_MARKET_OPEN_MIN = 9 * 60 + 15      # 09:15
+_MARKET_CLOSE_MIN = 15 * 60 + 30    # 15:30
+_NSE_HOLIDAYS = {
+    "2026-01-26", "2026-03-03", "2026-03-26", "2026-03-31", "2026-04-03",
+    "2026-04-14", "2026-05-01", "2026-05-28", "2026-06-26", "2026-09-14",
+    "2026-10-02", "2026-10-20", "2026-11-10", "2026-11-24", "2026-12-25",
+}
+
 
 def _today_ist() -> str:
     return datetime.now(_IST).strftime("%Y-%m-%d")
+
+
+def _market_open(now: Optional[datetime] = None) -> bool:
+    """True only during NSE equity trading hours (Mon–Fri 09:15–15:30 IST,
+    excluding holidays). Prices don't move otherwise, so we never scan then."""
+    now = now or datetime.now(_IST)
+    if now.weekday() >= 5:                       # Sat/Sun
+        return False
+    if now.strftime("%Y-%m-%d") in _NSE_HOLIDAYS:
+        return False
+    mins = now.hour * 60 + now.minute
+    return _MARKET_OPEN_MIN <= mins < _MARKET_CLOSE_MIN
 
 app = FastAPI(title="OI Dashboard")
 
@@ -211,6 +232,12 @@ _HIST_WARM_PER_REQ = 20   # max symbols to fetch history for in one request
 #  just serves the latest snapshot — ZERO Fyers calls per request — so the
 #  UI can auto-refresh every 15s without ever hitting the plan limit.
 # ----------------------------------------------------------------------
+# Scanner only runs while someone is actively looking at the screener AND the
+# market is open. A daily budget keeps us safely under Fyers' 5,000 calls/day.
+_SCAN_ACTIVE_WINDOW = 30.0     # seconds since last client pull to stay "active"
+_SCAN_DAILY_BUDGET = 4500      # headroom under the 5,000/day plan cap
+
+
 class _ScreenerScanner:
     def __init__(self):
         self.lock = threading.Lock()
@@ -222,6 +249,23 @@ class _ScreenerScanner:
         self.running = False
         self.last_error: Optional[str] = None
         self.auth_required = False
+        self.last_pull = 0.0                  # when a client last asked (heartbeat)
+        self.idle = True                      # currently paused (no scanning)
+
+    def touch(self):
+        """Register a client pull — keeps the scanner awake for a short window."""
+        self.last_pull = time.time()
+
+    def _budget_ok(self) -> bool:
+        getter = getattr(_source, "calls_today", None)
+        used = getter() if callable(getter) else 0
+        return used < _SCAN_DAILY_BUDGET
+
+    def should_scan(self) -> bool:
+        return (_source.name == "fyers"
+                and _market_open()
+                and (time.time() - self.last_pull) < _SCAN_ACTIVE_WINDOW
+                and self._budget_ok())
 
     def set_index(self, index: str):
         if index not in screener.INDEXES:
@@ -249,20 +293,25 @@ class _ScreenerScanner:
     def _run(self):
         while self.running:
             try:
+                # Pause entirely unless someone is watching AND the market is open
+                # AND we're under the daily budget. This is what keeps us from
+                # burning 5,000 calls/day scanning an idle/closed market.
+                if not self.should_scan():
+                    self.idle = True
+                    time.sleep(2.0)
+                    continue
+                self.idle = False
                 with self.lock:
                     uni = list(self.universe)
                     idx = self.index
-                if _source.name != "fyers":
-                    time.sleep(2.0)
-                    continue
                 for t in uni:
-                    if not self.running:
+                    if not self.running or not self.should_scan():
                         break
                     with self.lock:
                         if self.index != idx:   # universe changed mid-cycle → restart
                             break
                     try:
-                        q = _source.fetch_one_quote(t)   # rate-limited inside
+                        q = _source.fetch_one_quote(t)   # rate-limited + counted inside
                         self.auth_required = False
                         if q:
                             with self.lock:
@@ -275,8 +324,7 @@ class _ScreenerScanner:
                         break
                     except Exception as e:  # noqa: BLE001 - skip symbol, keep scanning
                         self.last_error = str(e)
-                # tiny idle between full cycles (rate limiter does the real pacing)
-                time.sleep(0.5)
+                time.sleep(0.5)   # tiny idle between cycles (limiter does the pacing)
             except Exception as e:  # noqa: BLE001 - never let the thread die
                 self.last_error = str(e)
                 time.sleep(2.0)
@@ -346,6 +394,7 @@ def api_screener(sort: str = Query("volume"), index: str = Query(screener.DEFAUL
 
     _scanner.set_index(index)
     _scanner.ensure_started()
+    _scanner.touch()                         # heartbeat: keep the scanner awake
     if _scanner.auth_required:
         raise HTTPException(status_code=401, detail="login_required")
 
@@ -358,6 +407,9 @@ def api_screener(sort: str = Query("volume"), index: str = Query(screener.DEFAUL
     return {"available": True, "sort": sort, "index": index,
             "scanned": total, "covered": len(quotes), "rows": rows,
             "warming": warming, "stale_secs": stale,
+            "market_open": _market_open(),
+            "budget_left": max(0, _SCAN_DAILY_BUDGET - (
+                _source.calls_today() if hasattr(_source, "calls_today") else 0)),
             "scan_error": _scanner.last_error if not quotes else None, "live": True}
 
 

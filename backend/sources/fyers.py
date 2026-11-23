@@ -50,12 +50,27 @@ _RL_CALLS: "collections.deque[float]" = collections.deque()
 _RL_LAST = 0.0
 _RL_MIN_GAP = 0.25  # min seconds between any two calls → ≤4/sec (hard cap)
 _RL_PER_MIN = 45    # headroom under 50/min
+_RL_DAY_COUNT = 0   # every Fyers call made today (dashboard + screener + history)
+_RL_DAY = ""        # IST date the counter belongs to
+
+
+def _ist_date() -> str:
+    return datetime.now(IST).strftime("%Y-%m-%d")
+
+
+def calls_today() -> int:
+    """Total Fyers API calls made so far today (resets at IST midnight)."""
+    global _RL_DAY_COUNT, _RL_DAY
+    with _RL_LOCK:
+        if _RL_DAY != _ist_date():
+            _RL_DAY, _RL_DAY_COUNT = _ist_date(), 0
+        return _RL_DAY_COUNT
 
 
 def _rate_limit():
     """Block until a call fits under BOTH the min-spacing (≤4/sec) and the
-    per-minute cap (≤45/min)."""
-    global _RL_LAST
+    per-minute cap (≤45/min). Also counts the call toward the daily total."""
+    global _RL_LAST, _RL_DAY_COUNT, _RL_DAY
     while True:
         with _RL_LOCK:
             now = time.monotonic()
@@ -66,6 +81,10 @@ def _rate_limit():
             if gap_ok and min_ok:
                 _RL_LAST = now
                 _RL_CALLS.append(now)
+                today = _ist_date()
+                if _RL_DAY != today:
+                    _RL_DAY, _RL_DAY_COUNT = today, 0
+                _RL_DAY_COUNT += 1
                 return
             waits = []
             if not gap_ok:
@@ -240,6 +259,10 @@ class FyersDataSource(DataSource):
         return self._check(self._model().positions())
 
     # ----------------------------------------------------------- screener
+    def calls_today(self) -> int:
+        """Total Fyers calls made today (shared across dashboard + screener)."""
+        return calls_today()
+
     def fetch_one_quote(self, ticker: str) -> dict | None:
         """One rate-limited live quote via the `depth` endpoint (the /quotes
         endpoint is blocked on this account). Returns a normalized dict or None.

@@ -153,19 +153,23 @@
     scrCovered = d.covered != null ? d.covered : (d.rows || []).length;
     scrStale = d.stale_secs || 0;
     scrWarming = d.warming || 0;
+    scrMarketOpen = d.market_open !== false;
+    scrBudgetLeft = d.budget_left != null ? d.budget_left : 1;
     applyFilters();                        // filter + draw without re-fetching
     if (typeof scrResetCountdown === "function") scrResetCountdown();
-    // while the background scanner is still filling the universe, poll the
-    // (cheap, no-Fyers-call) snapshot every few seconds so the table fills fast
+    // While the scanner is still filling the universe, poll the (no-Fyers-call)
+    // snapshot every few seconds so the table fills fast — but ONLY when the
+    // market is open and budget remains, else there's nothing new to load.
     if (scrWarmPoll) { clearTimeout(scrWarmPoll); scrWarmPoll = null; }
     const autoOn = !$("scrAuto") || $("scrAuto").checked;
-    const stillWarming = scrLive !== false && (scrCovered < scrScanned || scrWarming > 0);
+    const canScan = scrLive !== false && scrMarketOpen && scrBudgetLeft > 0;
+    const stillWarming = scrCovered < scrScanned || scrWarming > 0;
     const onScreener = $("viewScreener") && !$("viewScreener").classList.contains("hidden");
-    if (autoOn && stillWarming && onScreener && !document.hidden) {
+    if (autoOn && canScan && stillWarming && onScreener && !document.hidden) {
       scrWarmPoll = setTimeout(() => loadScreener({ auto: true }), 3000);
     }
   }
-  let scrWarmPoll = null;
+  let scrWarmPoll = null, scrMarketOpen = true, scrBudgetLeft = 1;
   function applyFilters() {
     const active = [...scrFilters].filter((f) => SCR_PRED[f]);
     let rows;
@@ -186,9 +190,13 @@
     const auto = mktOpen ? " · 🔄 15s" : " · ⏸ paused (market closed)";
     const nF = active.length;
     const head = scrLive === false ? "⚠️ Demo data" : "Live";
-    // coverage: how much of the universe the background scanner has loaded
+    // coverage / state note
     let cov = "";
-    if (scrLive !== false && scrCovered < scrScanned) {
+    if (scrLive !== false && scrBudgetLeft <= 0) {
+      cov = ` · 🚫 daily API limit reached — resumes tomorrow (showing last data)`;
+    } else if (scrLive !== false && !scrMarketOpen) {
+      cov = ` · ⏸ market closed — live scan paused`;
+    } else if (scrLive !== false && scrCovered < scrScanned) {
       cov = ` · ⏳ loading ${scrCovered}/${scrScanned}`;
     } else if (scrLive !== false && scrStale > 25) {
       cov = ` · updated ${scrStale}s ago`;
