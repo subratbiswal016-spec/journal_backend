@@ -248,27 +248,64 @@ def get(ticker: str) -> dict:
 
 
 def diag(ticker: str = "RELIANCE") -> dict:
-    """Uncached diagnostic: fetch once and report exactly what happened. Used by
-    the /api/stock/fundamentals_diag endpoint to debug cloud (Render) failures."""
+    """Uncached multi-probe diagnostic: tries several data sources and reports
+    which actually work from THIS host (e.g. Render). Used to pick a source that
+    isn't IP-blocked. Un-gated endpoint; returns no user data."""
     sym = (ticker or "RELIANCE").strip().upper()
     ysym = _OVERRIDES.get(sym, sym + _SUFFIX)
-    out: dict = {"symbol": sym, "ysym": ysym}
+    out: dict = {"symbol": sym, "probes": {}}
+    s = requests.Session()
+    s.headers.update({"User-Agent": _UA, "Accept": "*/*",
+                      "Accept-Language": "en-US,en;q=0.9"})
+
+    # 1) Yahoo crumb with a few retries (is the 429 persistent or transient?)
+    statuses = []
+    crumb = ""
     try:
-        crumb = _ensure_crumb(force=True)
-        out["crumb_ok"] = True
-        out["crumb_len"] = len(crumb)
-    except Exception as e:  # noqa: BLE001
-        out["crumb_ok"] = False
-        out["crumb_error"] = f"{type(e).__name__}: {str(e)[:120]}"
-        return out
+        s.get("https://finance.yahoo.com/quote/" + ysym, timeout=8)
+    except Exception:  # noqa: BLE001
+        pass
+    for _ in range(4):
+        try:
+            r = s.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=8)
+            statuses.append(r.status_code)
+            t = (r.text or "").strip()
+            if r.status_code == 200 and t and "<" not in t and len(t) < 40:
+                crumb = t
+                break
+        except Exception as e:  # noqa: BLE001
+            statuses.append(type(e).__name__)
+        time.sleep(1.5)
+    out["probes"]["yahoo_crumb"] = {"statuses": statuses, "got": bool(crumb)}
+
+    # 2) Yahoo quoteSummary (needs crumb)
+    if crumb:
+        try:
+            r = s.get(f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ysym}",
+                      params={"modules": _MODULES, "crumb": crumb}, timeout=10)
+            out["probes"]["yahoo_quotesummary"] = {"status": r.status_code,
+                "has_result": bool((((r.json() or {}).get("quoteSummary") or {}).get("result")))}
+        except Exception as e:  # noqa: BLE001
+            out["probes"]["yahoo_quotesummary"] = {"error": f"{type(e).__name__}: {str(e)[:80]}"}
+
+    # 3) Yahoo chart (no crumb) — price + 52w only
     try:
-        res = _fetch_raw(ysym)
-        out["fetch_ok"] = True
-        out["name"] = ((res.get("price") or {}).get("longName"))
-        out["modules"] = sorted(res.keys())
+        r = s.get(f"https://query1.finance.yahoo.com/v8/finance/chart/{ysym}", timeout=8)
+        meta = (((r.json() or {}).get("chart") or {}).get("result") or [{}])[0].get("meta", {})
+        out["probes"]["yahoo_chart"] = {"status": r.status_code,
+            "price": meta.get("regularMarketPrice"), "name": meta.get("longName") or meta.get("shortName")}
     except Exception as e:  # noqa: BLE001
-        out["fetch_ok"] = False
-        out["fetch_error"] = f"{type(e).__name__}: {str(e)[:120]}"
+        out["probes"]["yahoo_chart"] = {"error": f"{type(e).__name__}: {str(e)[:80]}"}
+
+    # 4) Screener.in (rich Indian fundamentals) — reachable + parseable?
+    try:
+        r = s.get(f"https://www.screener.in/company/{sym}/consolidated/", timeout=10)
+        html = r.text or ""
+        out["probes"]["screener_in"] = {"status": r.status_code,
+            "has_ratios": ("top-ratios" in html), "len": len(html)}
+    except Exception as e:  # noqa: BLE001
+        out["probes"]["screener_in"] = {"error": f"{type(e).__name__}: {str(e)[:80]}"}
+
     return out
 
 
