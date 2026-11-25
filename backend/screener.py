@@ -34,10 +34,11 @@ FO_STOCKS = [
     "COLPAL", "BERGEPAINT", "PAGEIND", "INDIGO", "MFSL", "MCX", "ANGELONE",
 ]
 
-# How many names to scan per refresh. Fyers' Standard plan caps API calls at
-# 5/sec, so scanning a big list every 15s isn't possible — we scan the most
-# liquid top-slice, which finishes comfortably inside the auto-refresh window.
-SCAN_LIMIT = 50
+# Max names the background scanner cycles through for one universe. The scanner
+# runs continuously (decoupled from the 15s UI refresh), so it can cover a big
+# universe over a few minutes. Capped so a full pass (and daily budget) stays
+# reasonable — bigger universes just mean each name refreshes a bit less often.
+SCAN_LIMIT = 180
 
 # --- index universes you can point the scanner at -----------------------
 NIFTY50 = [
@@ -74,12 +75,47 @@ def _dedup(seq: list[str]) -> list[str]:
 # Nifty 100 ≈ Nifty 50 + the next most-liquid F&O names (approximate).
 NIFTY100 = _dedup(NIFTY50 + FO_STOCKS)[:100]
 
+# Liquid NSE cash stocks beyond the F&O list — mid/small-caps that often move
+# and are tradeable intraday. Unknown tickers are simply skipped when quoted.
+BROAD_EXTRA = [
+    # banks / financials
+    "YESBANK", "UNIONBANK", "INDIANB", "IOB", "UCOBANK", "CENTRALBK", "MAHABANK",
+    "BANKINDIA", "KARURVYSYA", "CUB", "DCBBANK", "EQUITASBNK", "UJJIVANSFB",
+    "POONAWALLA", "BAJAJHLDNG", "SBICARD", "CDSL", "BSE", "CAMS", "IEX", "360ONE",
+    "KFINTECH", "ANGELONE", "IIFL", "MANAPPURAM",
+    # pharma / healthcare
+    "ZYDUSLIFE", "MANKIND", "JBCHEPHARM", "IPCALAB", "ABBOTINDIA", "FORTIS",
+    "MAXHEALTH", "NH", "METROPOLIS", "LALPATHLAB", "SYNGENE", "GRANULES",
+    "NATCOPHARM", "AJANTPHARM", "GLAND",
+    # auto / ancillary
+    "TIINDIA", "BOSCHLTD", "UNOMINDA", "ENDURANCE", "SUNDRMFAST",
+    # IT
+    "KPITTECH", "BIRLASOFT", "MASTEK", "ZENSARTECH",
+    # consumer / FMCG
+    "VBL", "GODREJIND", "EMAMILTD", "RADICO", "JYOTHYLAB", "PATANJALI",
+    "GILLETTE", "PGHH", "HONASA",
+    # realty
+    "GODREJPROP", "OBEROIRLTY", "PRESTIGE", "PHOENIXLTD", "LODHA", "BRIGADE",
+    "SOBHA", "NCC",
+    # PSU / energy / infra
+    "SJVN", "IREDA", "COCHINSHIP", "MAZDOCK", "BEML", "BDL", "RITES", "RAILTEL",
+    "NBCC", "NLCINDIA", "GSPL", "HUDCO", "IRCON", "RVNL",
+    # metals / chemicals
+    "HINDZINC", "NATIONALUM", "RATNAMANI", "JINDALSAW", "WELCORP", "FINEORG",
+    "VINATIORGA", "GNFC", "GSFC", "CHAMBLFERT", "TATACHEM", "LINDEINDIA", "SOLARINDS",
+    # new-age / retail / misc
+    "DELHIVERY", "MAPMYINDIA", "LATENTVIEW", "VMART", "ABFRL", "RAYMOND",
+]
+# Broad market (~230 liquid names): F&O universe + the extra cash stocks.
+BROAD = _dedup(FO_STOCKS + BROAD_EXTRA)
+
 INDEXES = {
-    "nifty50":   {"label": "Nifty 50",    "symbols": NIFTY50},
-    "banknifty": {"label": "Bank Nifty",  "symbols": BANKNIFTY},
-    "sensex":    {"label": "Sensex",      "symbols": SENSEX},
-    "nifty100":  {"label": "Nifty 100",   "symbols": NIFTY100},
-    "fno":       {"label": "F&O Stocks",  "symbols": FO_STOCKS},
+    "nifty50":   {"label": "Nifty 50",     "symbols": NIFTY50},
+    "banknifty": {"label": "Bank Nifty",   "symbols": BANKNIFTY},
+    "sensex":    {"label": "Sensex",       "symbols": SENSEX},
+    "nifty100":  {"label": "Nifty 100",    "symbols": NIFTY100},
+    "fno":       {"label": "F&O Stocks",   "symbols": FO_STOCKS},
+    "broad":     {"label": "All Stocks (broad)", "symbols": BROAD},
 }
 DEFAULT_INDEX = "nifty50"
 
