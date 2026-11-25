@@ -516,7 +516,7 @@
     $("anaTitle").textContent = s.sym;
 
     const sub = [f.sector, f.industry].filter(Boolean).map(esc).join(" · ");
-    let head = `<div class="ana-top">` +
+    let html = `<div class="ana-top">` +
       `<div class="ana-id"><div class="ana-name">${esc(name)}</div>` +
       (sub ? `<div class="ana-ind">${sub}</div>` : `<div class="ana-ind">${esc(s.sym)} · NSE</div>`) + `</div>` +
       `<div class="ana-px">` +
@@ -525,24 +525,15 @@
       (sig ? `<span class="sig ${scls}">${esc(sig)}</span>` : "") +
       `</div></div>`;
 
-    const hasAbout = f.ok && (f.summary || f.website);
-    const tabs = [["tech", "Technicals"], ["fund", "Fundamentals"]];
-    if (hasAbout) tabs.push(["about", "About"]);
-    if (s.tab === "about" && !hasAbout) s.tab = "fund";
-    const tabBar = `<div class="ana-tabs">` + tabs.map(([k, lbl]) =>
-      `<button class="ana-tab${s.tab === k ? " on" : ""}" data-tab="${k}">${lbl}` +
-      (k === "fund" && s.fundLoading ? ` <span class="ana-spin"></span>` : "") + `</button>`).join("") + `</div>`;
+    // One continuous detail view: technicals, then fundamentals, then about.
+    html += techTabHtml(t, scls);
+    html += `<div class="ana-div">💰 Fundamentals</div>`;
+    html += s.fundLoading ? `<p class="modal-sub">Loading fundamentals…</p>` : fundTabHtml(f, false, price);
+    if (f && f.ok && (f.summary || f.website))
+      html += `<div class="ana-div">ℹ️ About the company</div>` + aboutTabHtml(f);
 
-    let body = "";
-    if (s.tab === "tech") body = techTabHtml(t, scls);
-    else if (s.tab === "fund") body = fundTabHtml(f, s.fundLoading, price);
-    else body = aboutTabHtml(f);
-
-    $("anaBody").innerHTML = head + tabBar + `<div class="ana-tabbody">` + body + `</div>`;
-    Array.from($("anaBody").querySelectorAll(".ana-tab")).forEach((b) =>
-      b.addEventListener("click", () => { s.tab = b.dataset.tab; renderAnalysisShell(); }));
-    if (s.tab === "tech" && t.ok && t.chart && (t.chart.price || []).length > 1)
-      drawAnaChart(t.chart, scls);
+    $("anaBody").innerHTML = html;
+    if (t.ok && t.chart && (t.chart.price || []).length > 1) drawAnaChart(t.chart, scls);
   }
 
   function techTabHtml(d, scls) {

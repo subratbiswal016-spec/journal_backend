@@ -158,6 +158,8 @@ class FyersDataSource(DataSource):
         # per-symbol expiry label -> epoch-seconds string
         self._expiry_map: dict[str, dict[str, str]] = {}
         self._expiry_map_date: Optional[str] = None
+        # per-symbol futures cache (slow-moving) -> {"at": ts, "rows": [...]}
+        self._fut_cache: dict[str, dict] = {}
         self._load_token()
 
     # ----------------------------------------------------------------- token
@@ -251,11 +253,13 @@ class FyersDataSource(DataSource):
     # --------------------------------------------------------------- journal
     def fetch_tradebook(self) -> list[dict]:
         """Raw list of today's executed trades (fills) from Fyers."""
+        _rate_limit()             # respect 5/sec + 50/min + daily caps
         resp = self._check(self._model().tradebook())
         return resp.get("tradeBook") or resp.get("tradebook") or []
 
     def fetch_positions(self) -> dict:
         """Today's positions incl. realized P&L totals."""
+        _rate_limit()             # respect 5/sec + 50/min + daily caps
         return self._check(self._model().positions())
 
     # ----------------------------------------------------------- screener
@@ -356,6 +360,7 @@ class FyersDataSource(DataSource):
         self._refresh_expiry_cache_if_stale()
         ts = self._expiry_map.get(symbol, {}).get(expiry or "", "")
 
+        _rate_limit()             # respect 5/sec + 50/min + daily caps
         resp = self._check(fy.optionchain(data={"symbol": fsym, "strikecount": _STRIKE_COUNT, "timestamp": ts}))
         data = resp.get("data", {}) or {}
 
@@ -370,6 +375,7 @@ class FyersDataSource(DataSource):
         # If a specific expiry was requested but we hadn't cached its epoch yet,
         # re-fetch once with the correct timestamp.
         if expiry and not ts and expiry in emap:
+            _rate_limit()
             resp = self._check(fy.optionchain(
                 data={"symbol": fsym, "strikecount": _STRIKE_COUNT, "timestamp": emap[expiry]}))
             data = resp.get("data", {}) or {}
@@ -434,9 +440,16 @@ class FyersDataSource(DataSource):
         return out
 
     def _fetch_futures(self, symbol: str, fy) -> list[FuturesRow]:
+        # Futures OI moves slowly and is secondary to the option chain — serve a
+        # short cache so the Dashboard refresh does not spend 2 extra Fyers calls
+        # (per symbol) on every poll. Big win against the 50/min rate limit.
+        cached = self._fut_cache.get(symbol)
+        if cached and time.time() - cached["at"] < 45:
+            return cached["rows"]
         out: list[FuturesRow] = []
         for sym in self._monthly_fut_symbols(symbol):
             try:
+                _rate_limit()     # respect 5/sec + 50/min + daily caps
                 resp = fy.depth(data={"symbol": sym, "ohlcv_flag": 1})
                 if not isinstance(resp, dict) or resp.get("s") == "error":
                     continue
@@ -453,4 +466,5 @@ class FyersDataSource(DataSource):
                 ))
             except Exception:
                 continue  # futures are best-effort
+        self._fut_cache[symbol] = {"at": time.time(), "rows": out}
         return out

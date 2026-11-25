@@ -236,6 +236,11 @@ _HIST_WARM_PER_REQ = 20   # max symbols to fetch history for in one request
 # market is open. A daily budget keeps us safely under Fyers' 5,000 calls/day.
 _SCAN_ACTIVE_WINDOW = 30.0     # seconds since last client pull to stay "active"
 _SCAN_DAILY_BUDGET = 4500      # headroom under the 5,000/day plan cap
+# Don't re-fetch a stock whose quote is younger than this. Caps the scanner's
+# call rate (universe / target) and leaves headroom under the 45/min limiter for
+# the dashboard + ticker, so we never hit Fyers' 50/min cap. Quotes still refresh
+# every ~90s, which is plenty for a movers screener.
+_SCAN_STALE_TARGET = 90.0
 
 
 class _ScreenerScanner:
@@ -304,13 +309,20 @@ class _ScreenerScanner:
                 with self.lock:
                     uni = list(self.universe)
                     idx = self.index
+                fetched_any = False
                 for t in uni:
                     if not self.running or not self.should_scan():
                         break
                     with self.lock:
                         if self.index != idx:   # universe changed mid-cycle → restart
                             break
+                        last = self.updated.get(t, 0.0)
+                    # Skip stocks still fresh enough — avoids wasting calls
+                    # re-fetching a quote we already have. Big cut in API usage.
+                    if time.time() - last < _SCAN_STALE_TARGET:
+                        continue
                     try:
+                        fetched_any = True
                         q = _source.fetch_one_quote(t)   # rate-limited + counted inside
                         self.auth_required = False
                         if q:
@@ -324,7 +336,9 @@ class _ScreenerScanner:
                         break
                     except Exception as e:  # noqa: BLE001 - skip symbol, keep scanning
                         self.last_error = str(e)
-                time.sleep(0.5)   # tiny idle between cycles (limiter does the pacing)
+                # If every stock was still fresh, idle longer so we're not busy-
+                # spinning over timestamps; otherwise the limiter paces the fetches.
+                time.sleep(3.0 if not fetched_any else 0.5)
             except Exception as e:  # noqa: BLE001 - never let the thread die
                 self.last_error = str(e)
                 time.sleep(2.0)
@@ -343,7 +357,7 @@ def _warm_hist_async(symbols: list[str], today: str):
     def run():
         for s in symbols:
             try:
-                candles = _source.fetch_history(s, resolution="D", days=400)
+                candles = _source.fetch_history(s, resolution="D", days=365)
                 lv = screener.levels_from_history(candles)
             except Exception:  # noqa: BLE001 - skip, retry next refresh
                 lv = None
@@ -483,7 +497,9 @@ def api_screener_analyze(symbol: str = Query(...)):
         raise HTTPException(status_code=400, detail="symbol required")
     if _source.name == "fyers":
         try:
-            daily = _source.fetch_history(sym, resolution="D", days=400)
+            # Fyers caps a single daily history request at ~366 days — 365 gives
+            # ~250 sessions (enough for 52-week range, 200-DMA and 1-yr return).
+            daily = _source.fetch_history(sym, resolution="D", days=365)
             try:
                 intraday = _source.fetch_history(sym, resolution="5", days=3)
             except Exception:  # noqa: BLE001 - intraday optional; daily still useful
