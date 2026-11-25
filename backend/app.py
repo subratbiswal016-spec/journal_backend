@@ -373,6 +373,12 @@ def _hist_levels_for(symbols: list[str], today: str) -> tuple[dict, int]:
     return out, len(missing)
 
 
+@app.get("/api/symbols")
+def api_symbols():
+    """Full F&O stock list for the header search box."""
+    return {"stocks": screener.FO_STOCKS}
+
+
 @app.get("/api/screener/meta")
 def api_screener_meta():
     """Filter groups + index list so the UI can build its controls."""

@@ -191,6 +191,20 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .scr-clear:hover { background: rgba(239,83,80,.1); }
 #screenerTable td:last-child .sig { margin: 1px 2px 1px 0; }
 
+/* --- header stock search --- */
+.hsearch { position: relative; margin-left: auto; }
+.hsearch input { width: 220px; max-width: 46vw; padding: 8px 12px; font-size: 13px;
+  border-radius: 9px; background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); outline: none; }
+.hsearch input:focus { border-color: var(--accent, #6ea8fe); }
+.hsearch input::placeholder { color: var(--muted); }
+.hsearch-results { position: absolute; z-index: 60; top: calc(100% + 6px); right: 0; left: 0;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 5px;
+  box-shadow: 0 12px 30px rgba(0,0,0,.4); max-height: 320px; overflow-y: auto; }
+.hs-item { padding: 8px 11px; border-radius: 7px; font-size: 13px; font-weight: 600;
+  color: var(--text); cursor: pointer; }
+.hs-item:hover, .hs-item.active { background: var(--panel-2); color: var(--accent, #6ea8fe); }
+
 /* --- ticker tape (indices + high-volume stocks) --- */
 .ticker { display: flex; align-items: center; height: 38px; overflow: hidden;
   background: var(--panel); border-bottom: 1px solid var(--line); }

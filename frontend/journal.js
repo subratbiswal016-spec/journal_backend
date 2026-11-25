@@ -407,6 +407,53 @@
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !$("analyzeModal").classList.contains("hidden")) closeAnalyze();
   });
+
+  // ---- header stock search → opens the analysis popup ----
+  let SYMBOLS = [];
+  let searchMatches = [], searchActive = -1;
+  (async function initStockSearch() {
+    const inp = $("stockSearch"), box = $("stockSearchResults");
+    if (!inp || !box) return;
+    try { SYMBOLS = (await (await fetch("/api/symbols")).json()).stocks || []; } catch (e) { return; }
+    const hide = () => { box.classList.add("hidden"); searchActive = -1; };
+    function render() {
+      if (!searchMatches.length) { hide(); return; }
+      box.innerHTML = searchMatches.map((s, i) =>
+        `<div class="hs-item${i === searchActive ? " active" : ""}" data-sym="${esc(s)}">${esc(s)}</div>`).join("");
+      box.classList.remove("hidden");
+    }
+    function search(q) {
+      q = q.trim().toUpperCase();
+      if (!q) { searchMatches = []; hide(); return; }
+      const starts = [], has = [];
+      for (const s of SYMBOLS) {
+        if (s.startsWith(q)) starts.push(s);
+        else if (s.includes(q)) has.push(s);
+      }
+      searchMatches = starts.concat(has).slice(0, 8);
+      searchActive = searchMatches.length ? 0 : -1;
+      render();
+    }
+    function pick(sym) {
+      if (!sym) return;
+      inp.value = ""; searchMatches = []; hide(); inp.blur();
+      analyzeStock(sym);
+    }
+    inp.addEventListener("input", () => search(inp.value));
+    inp.addEventListener("focus", () => { if (inp.value.trim()) search(inp.value); });
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown") { e.preventDefault(); if (searchMatches.length) { searchActive = (searchActive + 1) % searchMatches.length; render(); } }
+      else if (e.key === "ArrowUp") { e.preventDefault(); if (searchMatches.length) { searchActive = (searchActive - 1 + searchMatches.length) % searchMatches.length; render(); } }
+      else if (e.key === "Enter") { e.preventDefault(); pick(searchMatches[searchActive] || searchMatches[0]); }
+      else if (e.key === "Escape") { hide(); }
+    });
+    box.addEventListener("mousedown", (e) => {
+      const it = e.target.closest(".hs-item");
+      if (it) { e.preventDefault(); pick(it.dataset.sym); }
+    });
+    document.addEventListener("click", (e) => { if (!e.target.closest(".hsearch")) hide(); });
+  })();
+
   async function analyzeStock(sym) {
     $("anaTitle").textContent = sym + " · analysis";
     $("anaBody").innerHTML = `<p class="modal-sub">Loading ${esc(sym)}…</p>`;
