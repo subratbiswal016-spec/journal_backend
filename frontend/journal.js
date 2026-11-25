@@ -61,6 +61,7 @@
     $("viewJournal").classList.toggle("hidden", view !== "journal");
     $("viewCapital").classList.toggle("hidden", view !== "capital");
     $("viewScreener").classList.toggle("hidden", view !== "screener");
+    if ($("viewIpo")) $("viewIpo").classList.toggle("hidden", view !== "ipo");
     $("viewRules").classList.toggle("hidden", view !== "rules");
     $("viewInsights").classList.toggle("hidden", view !== "insights");
     const oiCtl = $("oiControls");
@@ -68,8 +69,51 @@
     if (view === "journal") loadJournal();
     if (view === "capital") loadCapital();
     if (view === "screener") loadScreener();
+    if (view === "ipo") loadIpos();
     if (view === "rules") loadRules();
     if (view === "insights") loadInsights();
+  }
+
+  // ---------------------------------------------------------- IPO calendar
+  let ipoBound = false;
+  async function loadIpos() {
+    if (!ipoBound) {
+      ipoBound = true;
+      if ($("ipoRefresh")) $("ipoRefresh").addEventListener("click", () => loadIpos());
+    }
+    try {
+      const d = await (await fetch("/api/ipos")).json();
+      renderIpos(d);
+    } catch (e) {
+      if ($("ipoBody")) $("ipoBody").innerHTML = `<p class="jnote err">Could not load IPOs: ${esc(e.message)}</p>`;
+    }
+  }
+  function ipoCard(x) {
+    const seg = x.segment === "SME" ? `<span class="ipo-seg sme">SME</span>` : `<span class="ipo-seg mb">Mainboard</span>`;
+    const sub = (x.sub != null && x.sub !== "" && !isNaN(x.sub)) ? `<span class="ipo-sub">${x.sub}× subscribed</span>` : "";
+    const dates = [x.open_date, x.close_date].filter(Boolean).join(" → ");
+    return `<div class="ipo-card">` +
+      `<div class="ipo-top"><b class="ipo-name">${esc(x.name)}</b>${seg}</div>` +
+      `<div class="ipo-meta">` +
+      (x.price_band ? `<span>💰 ${esc(x.price_band)}</span>` : "") +
+      (dates ? `<span>📅 ${esc(dates)}</span>` : "") +
+      (x.symbol ? `<span>🔖 ${esc(x.symbol)}</span>` : "") +
+      sub + `</div></div>`;
+  }
+  function renderIpos(d) {
+    if ($("ipoUpdated")) $("ipoUpdated").textContent = d.updated ? "Updated " + d.updated : "";
+    const open = d.open || [], up = d.upcoming || [];
+    let html = "";
+    if (!d.ok && !open.length && !up.length)
+      html += `<p class="jnote">${esc(d.note || "IPO data is unavailable right now.")}</p>`;
+    html += `<div class="ipo-sect">🟢 Open now <span class="ipo-count">${open.length}</span></div>`;
+    html += open.length ? `<div class="ipo-grid">${open.map(ipoCard).join("")}</div>`
+                        : `<p class="modal-sub">No IPOs open for subscription right now.</p>`;
+    html += `<div class="ipo-sect">🔜 Upcoming <span class="ipo-count">${up.length}</span></div>`;
+    html += up.length ? `<div class="ipo-grid">${up.map(ipoCard).join("")}</div>`
+                      : `<p class="modal-sub">No upcoming IPOs announced yet.</p>`;
+    if (d.url) html += `<a class="ana-report" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">📋 Full IPO details on NSE ↗</a>`;
+    $("ipoBody").innerHTML = html;
   }
 
   // ---------------------------------------------------------- screener

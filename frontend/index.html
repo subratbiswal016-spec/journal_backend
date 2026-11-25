@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Option OI Dashboard</title>
   <script>try{if(localStorage.getItem('oi-theme')==='light')document.documentElement.classList.add('light');}catch(e){}</script>
-  <link rel="stylesheet" href="style.css?v=28" />
+  <link rel="stylesheet" href="style.css?v=29" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
   <script src="app.js?v=8" defer></script>
-  <script src="journal.js?v=27" defer></script>
+  <script src="journal.js?v=28" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -21,6 +21,7 @@
         <button class="tab" data-view="journal">📓 Journal</button>
         <button class="tab" data-view="capital">💰 Capital</button>
         <button class="tab" data-view="screener">🔎 Screener</button>
+        <button class="tab" data-view="ipo">🆕 IPO</button>
         <button class="tab" data-view="insights">🔍 Insights</button>
         <button class="tab" data-view="rules">⚖ Rules</button>
       </nav>
@@ -320,6 +321,21 @@
       </div>
     </div>
   </div>
+
+  <main id="viewIpo" class="hidden">
+    <div class="jcard">
+      <div class="jtoolbar" style="align-items:center">
+        <h2 style="margin:0">🆕 IPO Calendar <small>open now &amp; upcoming · NSE</small></h2>
+        <div style="margin-left:auto;display:flex;gap:10px;align-items:center">
+          <span id="ipoUpdated" class="modal-sub"></span>
+          <button id="ipoRefresh" class="jbtn">⟳ Refresh</button>
+        </div>
+      </div>
+      <div id="ipoStatus" class="jnote hidden"></div>
+      <div id="ipoBody"><p class="modal-sub">Loading IPOs…</p></div>
+      <p class="modal-sub" style="margin-top:12px">Data from NSE. Dates/price bands as published; <b>not an offer or advice</b> to apply.</p>
+    </div>
+  </main>
 
   <main id="viewInsights" class="hidden">
     <section class="card">

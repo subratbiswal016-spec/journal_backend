@@ -322,6 +322,22 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .ana-setup-g span { color: var(--muted); white-space: nowrap; }
 .ana-setup-g b { text-align: right; }
 .ana-setup-dis { font-size: 11px; color: var(--muted); margin: 10px 0 0; }
+
+/* IPO calendar */
+.ipo-sect { font-size: 13px; font-weight: 700; margin: 18px 0 10px; display: flex; align-items: center; gap: 8px; }
+.ipo-count { font-size: 11px; font-weight: 700; background: var(--chip, rgba(127,127,127,.12));
+  color: var(--muted); border-radius: 20px; padding: 1px 9px; }
+.ipo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.ipo-card { border: 1px solid var(--line); border-radius: 12px; padding: 13px 14px;
+  background: var(--chip, rgba(127,127,127,.05)); }
+.ipo-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 9px; }
+.ipo-name { font-size: 14px; line-height: 1.3; }
+.ipo-seg { font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 20px; white-space: nowrap; }
+.ipo-seg.mb { background: var(--put-dim, rgba(38,166,154,.18)); color: var(--put); }
+.ipo-seg.sme { background: rgba(245,166,35,.18); color: #d9900f; }
+.ipo-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; color: var(--muted); }
+.ipo-meta span { white-space: nowrap; }
+.ipo-sub { color: var(--put); font-weight: 600; }
 .ana-about { font-size: 13.5px; line-height: 1.6; color: var(--text); margin: 0 0 12px; }
 @media (max-width: 560px) {
   .ana-chips { grid-template-columns: repeat(2, 1fr); }

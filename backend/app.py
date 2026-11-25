@@ -23,7 +23,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                RedirectResponse, Response)
 from fastapi.staticfiles import StaticFiles
 
-from . import analytics, config, screener, fundamentals
+from . import analytics, config, screener, fundamentals, ipo
 from .sources import get_source
 from .sources.base import AuthRequired
 from .journal import store as jstore, rules as jrules, analytics as janalytics
@@ -73,7 +73,7 @@ async def _gate_and_cache(request: Request, call_next):
     # 1) password gate (only when enabled)
     if _APP_PASSWORD:
         path = request.url.path
-        allowed = path in ("/login", "/healthz", "/api/stock/fundamentals_diag")
+        allowed = path in ("/login", "/healthz", "/api/stock/fundamentals_diag", "/api/ipos_diag")
         if not allowed and request.cookies.get("jpass") != _auth_token():
             if path.startswith("/api/") or path.startswith("/auth/"):
                 return JSONResponse({"detail": "auth_required"}, status_code=401)
@@ -529,6 +529,20 @@ def api_stock_fundamentals_diag(symbol: str = Query("RELIANCE")):
     """Temporary, un-gated diagnostic for Yahoo fundamentals on the cloud host.
     Reveals only whether the Yahoo handshake works (no user data)."""
     return fundamentals.diag(symbol)
+
+
+@app.get("/api/ipos")
+def api_ipos():
+    """Open + upcoming IPOs (NSE). Independent of Fyers."""
+    if _source.name == "fyers":
+        return ipo.get()
+    return ipo.demo()
+
+
+@app.get("/api/ipos_diag")
+def api_ipos_diag():
+    """Un-gated diagnostic: does NSE's IPO API answer from this host?"""
+    return ipo.probe()
 
 
 @app.get("/healthz")
