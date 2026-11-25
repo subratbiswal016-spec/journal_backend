@@ -1,16 +1,19 @@
-"""Company fundamentals for NSE stocks via Yahoo Finance (free, public).
+"""Company fundamentals for NSE stocks.
+
+Primary source is Screener.in (rich Indian fundamentals: market cap, P/E, ROCE,
+ROE, book value, dividend yield, pros & cons, plus a link to the full report).
+Yahoo Finance is a secondary fallback for non-cloud hosts (Yahoo rate-limits
+datacenter IPs like Render's with HTTP 429, so it is unreliable there).
 
 This is SEPARATE from Fyers — it does not touch the Fyers rate-limit budget.
-Results are cached per IST day because fundamentals change slowly, and a failed
-fetch is negatively cached for a short while so a blocked/rate-limited Yahoo
-does not get hammered. Everything degrades gracefully: if Yahoo is unavailable
-the stock detail view still shows the (Fyers-derived) technicals.
-
-Yahoo requires a per-session "crumb" + cookie handshake; we do it once and
-reuse the session.
+Results are cached per IST day; a failed fetch is negatively cached briefly.
+Everything degrades gracefully: if fundamentals are unavailable the stock detail
+view still shows the (Fyers-derived) technicals.
 """
 from __future__ import annotations
 
+import html as _html
+import re
 import threading
 import time
 from datetime import datetime, timezone, timedelta
@@ -217,6 +220,100 @@ def _map(res: dict, sym: str) -> dict:
     return out
 
 
+# ----------------------------------------------------------- Screener.in
+def _clean(frag: str) -> str:
+    """Strip HTML tags + entities, collapse whitespace."""
+    txt = re.sub(r"<[^>]+>", " ", frag or "")
+    txt = _html.unescape(txt)
+    return re.sub(r"\s+", " ", txt).strip()
+
+
+def _screener_list(html_text: str, cls: str) -> list[str]:
+    """Extract the <li> texts of a pros/cons block."""
+    m = re.search(r'<div[^>]*class="[^"]*\b' + cls + r'\b[^"]*"[^>]*>.*?<ul[^>]*>(.*?)</ul>',
+                  html_text, re.S)
+    if not m:
+        return []
+    items = [_clean(x) for x in re.findall(r'<li[^>]*>(.*?)</li>', m.group(1), re.S)]
+    return [x for x in items if x][:8]
+
+
+def _fetch_screener(sym: str) -> dict:
+    """Scrape the key ratios + pros/cons + about from Screener.in. Works from
+    datacenter IPs (unlike Yahoo), with exactly the Indian fundamentals users
+    expect. Returns a display-ready {ratios:[{name,value}], pros, cons, about}."""
+    url = f"https://www.screener.in/company/{sym}/"
+    r = requests.get(url, headers={"User-Agent": _UA, "Accept": "text/html,*/*",
+                                   "Accept-Language": "en-US,en;q=0.9"}, timeout=12)
+    r.raise_for_status()
+    t = r.text or ""
+
+    nm = re.search(r'<h1[^>]*>(.*?)</h1>', t, re.S)
+    name = _clean(nm.group(1)) if nm else sym
+
+    block = re.search(r'<ul id="top-ratios".*?</ul>', t, re.S)
+    ratios: list[dict] = []
+    if block:
+        for li in re.findall(r'<li[^>]*>(.*?)</li>', block.group(0), re.S):
+            nmm = re.search(r'class="name">(.*?)</span>', li, re.S)
+            if not nmm:
+                continue
+            rname = _clean(nmm.group(1))
+            rval = _clean(li.replace(nmm.group(0), ""))
+            if rname and rval and rname.lower() != rval.lower():
+                ratios.append({"name": rname, "value": rval})
+    if not ratios:
+        raise RuntimeError("screener: no ratios parsed")
+
+    about = None
+    for pat in (r'<div class="company-profile">.*?<p[^>]*>(.*?)</p>',
+                r'class="[^"]*about[^"]*"[^>]*>.*?<p[^>]*>(.*?)</p>'):
+        ab = re.search(pat, t, re.S)
+        if ab:
+            about = _clean(ab.group(1))[:650]
+            if about:
+                break
+
+    return {
+        "ok": True, "symbol": sym, "name": name, "source": "Screener.in",
+        "url": url, "ratios": ratios, "about": about or None,
+        "pros": _screener_list(t, "pros"), "cons": _screener_list(t, "cons"),
+    }
+
+
+def _yahoo_ratios(sym: str) -> dict:
+    """Yahoo fallback, mapped into the same display shape as Screener."""
+    ysym = _OVERRIDES.get(sym, sym + _SUFFIX)
+    y = _map(_fetch_raw(ysym), sym)
+    if not y.get("ok"):
+        raise RuntimeError("yahoo: no data")
+
+    def _cr(v):
+        return f"₹ {v/1e7:,.0f} Cr." if isinstance(v, (int, float)) else None
+
+    def _pc(v):
+        return f"{v*100:.2f}%" if isinstance(v, (int, float)) else None
+
+    def _rs(v):
+        return f"₹ {v:,.2f}" if isinstance(v, (int, float)) else None
+
+    def _n(v):
+        return f"{v:.2f}" if isinstance(v, (int, float)) else None
+
+    pairs = [("Market Cap", _cr(y.get("market_cap"))), ("Stock P/E", _n(y.get("pe"))),
+             ("EPS (TTM)", _rs(y.get("eps"))), ("Book Value", _rs(y.get("book_value"))),
+             ("Price / Book", _n(y.get("pb"))), ("Dividend Yield", _pc(y.get("div_yield"))),
+             ("ROE", _pc(y.get("roe"))), ("Profit Margin", _pc(y.get("profit_margin"))),
+             ("Beta", _n(y.get("beta"))),
+             ("52W High", _rs(y.get("week52_high"))), ("52W Low", _rs(y.get("week52_low")))]
+    ratios = [{"name": k, "value": v} for k, v in pairs if v]
+    if not ratios:
+        raise RuntimeError("yahoo: empty")
+    return {"ok": True, "symbol": sym, "name": y.get("name") or sym,
+            "source": "Yahoo Finance", "url": f"https://finance.yahoo.com/quote/{ysym}",
+            "ratios": ratios, "about": y.get("summary"), "pros": [], "cons": []}
+
+
 def get(ticker: str) -> dict:
     """Return a fundamentals dict for an NSE ticker. Never raises."""
     sym = (ticker or "").strip().upper()
@@ -233,13 +330,22 @@ def get(ticker: str) -> dict:
                 return c["data"]
 
     global _LAST_REASON
-    try:
-        data = _map(_fetch_raw(ysym), sym)
-        _LAST_REASON = ""
-    except Exception as e:  # noqa: BLE001 - fundamentals are best-effort
-        _LAST_REASON = f"{type(e).__name__}: {str(e)[:80]}"
+    data = None
+    reasons = []
+    for fetch in (_fetch_screener, _yahoo_ratios):   # Screener primary, Yahoo fallback
+        try:
+            d = fetch(sym)
+            if d and d.get("ok"):
+                data = d
+                break
+        except Exception as e:  # noqa: BLE001 - try the next source
+            reasons.append(f"{fetch.__name__}: {type(e).__name__} {str(e)[:60]}")
+    if data is None:
+        _LAST_REASON = " | ".join(reasons)
         data = {"ok": False, "symbol": sym, "reason": _LAST_REASON,
                 "note": "Fundamentals are temporarily unavailable for this stock."}
+    else:
+        _LAST_REASON = ""
 
     with _lock:
         _cache[sym] = {"date": today, "ts": now,
@@ -310,55 +416,35 @@ def diag(ticker: str = "RELIANCE") -> dict:
 
 
 def demo(ticker: str) -> dict:
-    """Synthetic fundamentals so the detail view is populated in demo mode."""
+    """Synthetic fundamentals (Screener-shaped) so the detail view populates in
+    demo mode."""
     import random
     sym = (ticker or "DEMO").strip().upper()
     rng = random.Random(sum(ord(c) for c in sym) * 7 + 1)
-    sectors = [("Financial Services", "Banks - Regional"),
-               ("Technology", "Information Technology Services"),
-               ("Consumer Cyclical", "Auto Manufacturers"),
-               ("Healthcare", "Drug Manufacturers - Specialty"),
-               ("Energy", "Oil & Gas Refining & Marketing"),
-               ("Basic Materials", "Steel")]
-    sec, ind = rng.choice(sectors)
-    cap = rng.uniform(8_000, 1_900_000) * 1e7   # ₹8k Cr – ₹19L Cr
+    cap = rng.uniform(8_000, 19_00_000)          # ₹ Cr
     eps = rng.uniform(8, 120)
     pe = rng.uniform(9, 65)
     price = round(eps * pe, 2)
+    bv = round(price / rng.uniform(1.2, 8), 2)
+    ratios = [
+        {"name": "Market Cap", "value": f"₹ {cap:,.0f} Cr."},
+        {"name": "Current Price", "value": f"₹ {price:,.2f}"},
+        {"name": "High / Low", "value": f"₹ {price*rng.uniform(1.1,1.5):,.0f} / {price*rng.uniform(0.6,0.9):,.0f}"},
+        {"name": "Stock P/E", "value": f"{pe:.1f}"},
+        {"name": "Book Value", "value": f"₹ {bv:,.0f}"},
+        {"name": "Dividend Yield", "value": f"{rng.uniform(0,3):.2f} %"},
+        {"name": "ROCE", "value": f"{rng.uniform(8,28):.1f} %"},
+        {"name": "ROE", "value": f"{rng.uniform(6,32):.1f} %"},
+        {"name": "Face Value", "value": f"₹ {rng.choice([1,2,5,10]):.2f}"},
+    ]
     return {
         "ok": True, "symbol": sym, "source": "Demo data",
-        "name": sym.title() + " Ltd (demo)", "exchange": "NSI", "currency": "INR",
-        "sector": sec, "industry": ind,
-        "summary": (f"{sym.title()} Ltd is a demo company used while the app runs "
-                    "without a live Fyers/Yahoo connection. Figures here are "
-                    "synthetic and for layout testing only."),
-        "website": "https://example.com", "employees": rng.randint(2_000, 120_000),
-        "market_cap": cap, "enterprise_value": cap * rng.uniform(0.9, 1.3),
-        "pe": round(pe, 2), "forward_pe": round(pe * rng.uniform(0.8, 1.05), 2),
-        "peg": round(rng.uniform(0.6, 3.2), 2), "pb": round(rng.uniform(0.8, 12), 2),
-        "eps": round(eps, 2), "forward_eps": round(eps * rng.uniform(1.0, 1.25), 2),
-        "book_value": round(price / rng.uniform(1.2, 8), 2),
-        "div_yield": round(rng.uniform(0, 0.04), 4), "div_rate": round(rng.uniform(0, 30), 2),
-        "beta": round(rng.uniform(0.4, 1.8), 2),
-        "week52_high": round(price * rng.uniform(1.05, 1.6), 2),
-        "week52_low": round(price * rng.uniform(0.5, 0.92), 2),
-        "avg_vol": rng.randint(2_00_000, 90_00_000),
-        "price_yahoo": price, "chg_pct_yahoo": round(rng.uniform(-3, 3), 2),
-        "change_52w": round(rng.uniform(-0.3, 0.8), 3),
-        "roe": round(rng.uniform(0.05, 0.35), 3), "roa": round(rng.uniform(0.02, 0.18), 3),
-        "profit_margin": round(rng.uniform(0.04, 0.3), 3),
-        "oper_margin": round(rng.uniform(0.08, 0.4), 3),
-        "gross_margin": round(rng.uniform(0.2, 0.7), 3),
-        "rev_growth": round(rng.uniform(-0.1, 0.4), 3),
-        "earn_growth": round(rng.uniform(-0.2, 0.6), 3),
-        "debt_to_equity": round(rng.uniform(0.0, 1.8), 2),
-        "current_ratio": round(rng.uniform(0.8, 3.0), 2),
-        "total_revenue": cap * rng.uniform(0.2, 1.1), "ebitda": cap * rng.uniform(0.05, 0.3),
-        "total_cash": cap * rng.uniform(0.02, 0.2), "total_debt": cap * rng.uniform(0.0, 0.5),
-        "shares_out": cap / price if price else None,
-        "recommendation": rng.choice(["buy", "hold", "strong_buy", "sell", "underperform"]),
-        "num_analysts": rng.randint(4, 42),
-        "target_mean": round(price * rng.uniform(0.95, 1.3), 2),
-        "target_high": round(price * rng.uniform(1.3, 1.7), 2),
-        "target_low": round(price * rng.uniform(0.6, 0.95), 2),
+        "name": sym.title() + " Ltd (demo)",
+        "url": "https://www.screener.in/company/" + sym + "/",
+        "about": (f"{sym.title()} Ltd is a demo company shown while the app runs "
+                  "without a live connection. Figures are synthetic, for layout only."),
+        "ratios": ratios,
+        "pros": ["Company has delivered good profit growth (demo).",
+                 "Maintaining healthy dividend payout (demo)."],
+        "cons": ["Stock is trading at a high valuation (demo)."],
     }

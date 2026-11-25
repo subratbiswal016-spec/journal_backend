@@ -298,6 +298,30 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .ana-src { font-size: 11px; color: var(--muted); margin: 12px 0 0; }
 .ana-div { font-size: 14px; font-weight: 700; margin: 20px 0 4px; padding-top: 14px;
   border-top: 2px solid var(--line); color: var(--text); }
+/* fundamentals: pros & cons + full-report button */
+.ana-pc { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; margin: 12px 0; }
+.ana-pch { font-size: 12px; font-weight: 700; margin-bottom: 4px; }
+.ana-pch.pos { color: var(--put); } .ana-pch.neg { color: var(--call); }
+.ana-plist { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.6; color: var(--text); }
+.ana-plist li { margin-bottom: 3px; }
+.ana-report { display: block; text-align: center; margin: 14px 0 4px; padding: 11px 12px;
+  background: var(--brand, #3b82f6); color: #fff; border-radius: 10px; font-size: 13px;
+  font-weight: 600; text-decoration: none; }
+.ana-report:hover { filter: brightness(1.07); }
+@media (max-width: 560px) { .ana-pc { grid-template-columns: 1fr; } }
+/* mechanical setup & timing box */
+.ana-setup { border: 1px solid var(--line); border-left: 4px solid var(--muted); border-radius: 12px;
+  padding: 12px 14px; margin: 2px 0 14px; background: var(--chip, rgba(127,127,127,.06)); }
+.ana-setup.bull { border-left-color: var(--put); } .ana-setup.bear { border-left-color: var(--call); }
+.ana-setup.flat { border-left-color: #f5a623; }
+.ana-setup-h { font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+.ana-setup-t { font-size: 13px; line-height: 1.55; color: var(--text); margin: 8px 0 10px; }
+.ana-setup-g { display: grid; gap: 7px; }
+.ana-setup-g > div { display: flex; justify-content: space-between; gap: 14px; font-size: 13px;
+  border-top: 1px dashed var(--line); padding-top: 7px; }
+.ana-setup-g span { color: var(--muted); white-space: nowrap; }
+.ana-setup-g b { text-align: right; }
+.ana-setup-dis { font-size: 11px; color: var(--muted); margin: 10px 0 0; }
 .ana-about { font-size: 13.5px; line-height: 1.6; color: var(--text); margin: 0 0 12px; }
 @media (max-width: 560px) {
   .ana-chips { grid-template-columns: repeat(2, 1fr); }

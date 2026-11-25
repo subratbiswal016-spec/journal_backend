@@ -511,26 +511,23 @@
     const name = (f.ok && f.name) ? f.name : s.sym;
     const sig = t.ok ? t.signal : null;
     const scls = /bull/i.test(sig || "") ? "bull" : /bear/i.test(sig || "") ? "bear" : "flat";
-    const price = (t.ok && t.price != null) ? t.price : (f.ok ? f.price_yahoo : null);
-    const chg = (t.ok && t.chg_pct != null) ? t.chg_pct : (f.ok ? f.chg_pct_yahoo : null);
+    const price = (t.ok && t.price != null) ? t.price : null;
+    const chg = (t.ok && t.chg_pct != null) ? t.chg_pct : null;
     $("anaTitle").textContent = s.sym;
 
-    const sub = [f.sector, f.industry].filter(Boolean).map(esc).join(" · ");
     let html = `<div class="ana-top">` +
       `<div class="ana-id"><div class="ana-name">${esc(name)}</div>` +
-      (sub ? `<div class="ana-ind">${sub}</div>` : `<div class="ana-ind">${esc(s.sym)} · NSE</div>`) + `</div>` +
+      `<div class="ana-ind">${esc(s.sym)} · NSE</div></div>` +
       `<div class="ana-px">` +
       (price != null ? `<div class="ana-price">${money(price)}</div>` : "") +
       (chg != null ? `<div class="ana-trend ${chg >= 0 ? "pos" : "neg"}">${chg >= 0 ? "+" : ""}${fmt(chg, 2)}%</div>` : "") +
       (sig ? `<span class="sig ${scls}">${esc(sig)}</span>` : "") +
       `</div></div>`;
 
-    // One continuous detail view: technicals, then fundamentals, then about.
+    // One continuous detail view: technicals, then fundamentals.
     html += techTabHtml(t, scls);
     html += `<div class="ana-div">💰 Fundamentals</div>`;
-    html += s.fundLoading ? `<p class="modal-sub">Loading fundamentals…</p>` : fundTabHtml(f, false, price);
-    if (f && f.ok && (f.summary || f.website))
-      html += `<div class="ana-div">ℹ️ About the company</div>` + aboutTabHtml(f);
+    html += s.fundLoading ? `<p class="modal-sub">Loading fundamentals…</p>` : fundTabHtml(f, s.sym);
 
     $("anaBody").innerHTML = html;
     if (t.ok && t.chart && (t.chart.price || []).length > 1) drawAnaChart(t.chart, scls);
@@ -541,6 +538,21 @@
     const row = (k, v, cls) => `<div class="ana-row"><span>${k}</span><b class="${cls || ""}">${v}</b></div>`;
     const sect = (t) => `<div class="ana-sect">${t}</div>`;
     let html = "";
+    // Mechanical setup & timing (not advice)
+    const su = d.setup;
+    if (su && su.bias) {
+      const bcls = /bull/i.test(su.bias) ? "bull" : /bear/i.test(su.bias) ? "bear" : "flat";
+      html += `<div class="ana-setup ${bcls}">` +
+        `<div class="ana-setup-h">🎯 Setup &amp; timing <span class="sig ${bcls}">${esc(su.bias)}</span></div>` +
+        (su.timing ? `<p class="ana-setup-t">${esc(su.timing)}</p>` : "") +
+        `<div class="ana-setup-g">` +
+        (su.entry_zone ? `<div><span>Entry zone</span><b>${esc(su.entry_zone)}</b></div>` : "") +
+        (su.trigger ? `<div><span>Trigger</span><b>${esc(su.trigger)}</b></div>` : "") +
+        (su.stop ? `<div><span>Stop / invalidation</span><b>${esc(su.stop)}</b></div>` : "") +
+        `</div>` +
+        `<p class="ana-setup-dis">Mechanical read of levels — <b>not buy/sell advice</b>.</p>` +
+        `</div>`;
+    }
     if (d.chart && (d.chart.price || []).length > 1)
       html += sect("📊 " + esc(d.chart.title || "Price")) + `<div class="ana-chart"><canvas id="anaChart"></canvas></div>`;
     if (d.intraday) {
@@ -577,77 +589,29 @@
     return html;
   }
 
-  const RECO = { strong_buy: ["Strong Buy", "pos"], buy: ["Buy", "pos"], hold: ["Hold", "warn"], underperform: ["Underperform", "neg"], sell: ["Sell", "neg"], none: ["—", ""] };
-  function fundTabHtml(f, loading, techPrice) {
-    if (!f || (!f.ok && loading)) return `<p class="modal-sub">Loading fundamentals…</p>`;
-    if (!f.ok) return `<p class="jnote">${esc(f.note || "Fundamentals are temporarily unavailable for this stock.")}</p>`;
-    const row = (k, v, cls) => `<div class="ana-row"><span>${k}</span><b class="${cls || ""}">${v}</b></div>`;
-    const sect = (t) => `<div class="ana-sect">${t}</div>`;
-    // key-stat chips
-    const chips = [
-      ["Market cap", crore(f.market_cap)], ["P/E (TTM)", numF(f.pe)],
-      ["EPS (TTM)", money(f.eps)], ["P/B", numF(f.pb)],
-      ["Div yield", pctF(f.div_yield)], ["ROE", pctF(f.roe)],
-      ["Beta", numF(f.beta)], ["52-wk range", money(f.week52_low) + " – " + money(f.week52_high)],
-    ];
-    let html = `<div class="ana-chips">` + chips.map(([k, v]) =>
-      `<div class="ana-chip"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("") + `</div>`;
-
-    html += sect("💰 Valuation") + `<div class="ana-grid">` +
-      row("Market cap", crore(f.market_cap)) + row("Enterprise value", crore(f.enterprise_value)) +
-      row("P/E (TTM)", numF(f.pe)) + row("Forward P/E", numF(f.forward_pe)) +
-      row("PEG ratio", numF(f.peg)) + row("Price / Book", numF(f.pb)) +
-      row("EPS (TTM)", money(f.eps)) + row("Book value", money(f.book_value)) +
-      row("Dividend yield", pctF(f.div_yield)) + row("Dividend / share", f.div_rate ? money(f.div_rate) : "—") +
-      `</div>`;
-
-    html += sect("📊 Profitability & growth") + `<div class="ana-grid">` +
-      row("ROE", pctF(f.roe)) + row("ROA", pctF(f.roa)) +
-      row("Profit margin", pctF(f.profit_margin)) + row("Operating margin", pctF(f.oper_margin)) +
-      row("Revenue growth (YoY)", pctF(f.rev_growth), signCls(f.rev_growth)) +
-      row("Earnings growth (YoY)", pctF(f.earn_growth), signCls(f.earn_growth)) +
-      `</div>`;
-
-    html += sect("🏦 Financial health") + `<div class="ana-grid">` +
-      row("Total revenue", crore(f.total_revenue)) + row("EBITDA", crore(f.ebitda)) +
-      row("Total cash", crore(f.total_cash)) + row("Total debt", crore(f.total_debt)) +
-      row("Debt / equity", f.debt_to_equity != null ? numF(f.debt_to_equity) + "×" : "—") +
-      row("Current ratio", numF(f.current_ratio)) +
-      `</div>`;
-
-    // analyst targets
-    const tgt = f.target_mean, lo = f.target_low, hi = f.target_high;
-    const cur = _n(techPrice) != null ? _n(techPrice) : _n(f.price_yahoo);
-    if (tgt != null || f.recommendation) {
-      const rc = RECO[f.recommendation] || RECO.none;
-      html += sect("🎯 Analyst view");
-      html += `<div class="ana-row"><span>Consensus</span><b><span class="reco ${rc[1]}">${rc[0]}</span>` +
-        (f.num_analysts ? ` <small>(${f.num_analysts} analysts)</small>` : "") + `</b></div>`;
-      if (tgt != null) html += `<div class="ana-row"><span>Mean target</span><b>${money(tgt)}` +
-        (cur != null && cur ? ` <small class="${tgt >= cur ? "pos" : "neg"}">(${tgt >= cur ? "+" : ""}${fmt((tgt - cur) / cur * 100, 1)}%)</small>` : "") + `</b></div>`;
-      if (lo != null && hi != null && hi > lo) {
-        const pos = cur != null ? Math.max(0, Math.min(100, (cur - lo) / (hi - lo) * 100)) : null;
-        html += `<div class="ana-tgt"><div class="ana-tgt-bar">` +
-          (pos != null ? `<span class="ana-tgt-cur" style="left:${pos}%" title="Current ${money(cur)}"></span>` : "") +
-          `</div><div class="ana-tgt-lbl"><span>${money(lo)}</span><span>low · high</span><span>${money(hi)}</span></div></div>`;
-      }
+  function fundTabHtml(f, sym) {
+    const scrUrl = "https://www.screener.in/company/" + encodeURIComponent(((f && f.symbol) || sym || "")) + "/";
+    if (!f || !f.ok) {
+      return `<p class="jnote">${esc((f && f.note) || "Fundamentals are temporarily unavailable for this stock.")}</p>` +
+        `<a class="ana-report" href="${scrUrl}" target="_blank" rel="noopener noreferrer">📊 Open full fundamentals on Screener.in ↗</a>`;
     }
-    html += `<p class="ana-src">Fundamentals: ${esc(f.source || "Yahoo Finance")}${f.exchange ? " · " + esc(f.exchange) : ""}. Figures are TTM/latest reported and may lag.</p>`;
-    return html;
-  }
-
-  function aboutTabHtml(f) {
-    if (!f || !f.ok) return `<p class="jnote">No company profile available.</p>`;
-    let html = "";
-    if (f.summary) html += `<p class="ana-about">${esc(f.summary)}</p>`;
-    const row = (k, v) => `<div class="ana-row"><span>${k}</span><b>${v}</b></div>`;
-    html += `<div class="ana-grid">` +
-      (f.sector ? row("Sector", esc(f.sector)) : "") +
-      (f.industry ? row("Industry", esc(f.industry)) : "") +
-      (f.employees ? row("Employees", fmt(f.employees, 0)) : "") +
-      (f.shares_out ? row("Shares outstanding", volh(f.shares_out)) : "") +
-      `</div>`;
-    if (f.website) html += `<p class="ana-src"><a href="${esc(f.website)}" target="_blank" rel="noopener noreferrer">${esc(f.website)}</a></p>`;
+    // Key ratios (Market cap, P/E, ROCE, ROE, Book value, Dividend yield, …)
+    const ratios = f.ratios || [];
+    let html = `<div class="ana-chips">` + ratios.map((r) =>
+      `<div class="ana-chip"><div class="k">${esc(r.name)}</div><div class="v">${esc(r.value)}</div></div>`).join("") + `</div>`;
+    // Pros & cons (Screener's analysis)
+    if ((f.pros && f.pros.length) || (f.cons && f.cons.length)) {
+      html += `<div class="ana-pc">`;
+      if (f.pros && f.pros.length) html += `<div class="ana-pccol"><div class="ana-pch pos">✔ Pros</div><ul class="ana-plist">` +
+        f.pros.map((p) => `<li>${esc(p)}</li>`).join("") + `</ul></div>`;
+      if (f.cons && f.cons.length) html += `<div class="ana-pccol"><div class="ana-pch neg">✘ Cons</div><ul class="ana-plist">` +
+        f.cons.map((p) => `<li>${esc(p)}</li>`).join("") + `</ul></div>`;
+      html += `</div>`;
+    }
+    if (f.about) html += `<div class="ana-sect">ℹ️ About</div><p class="ana-about">${esc(f.about)}</p>`;
+    html += `<a class="ana-report" href="${esc(f.url || scrUrl)}" target="_blank" rel="noopener noreferrer">` +
+      `📊 Full report on ${esc(f.source || "Screener.in")} — peers · quarterly · balance sheet · cash flow ↗</a>`;
+    html += `<p class="ana-src">Fundamentals: ${esc(f.source || "Screener.in")}. Reported figures — may lag the live price.</p>`;
     return html;
   }
   let anaChart = null;

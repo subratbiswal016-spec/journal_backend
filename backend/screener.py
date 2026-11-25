@@ -635,7 +635,58 @@ def analyze(symbol: str, daily: list[list], intraday: list[list] | None = None) 
             "ema20": _ema_series(tcloses, 20),
         }
 
+    out["setup"] = _trade_setup(out)
     return out
+
+
+def _trade_setup(o: dict) -> dict:
+    """Mechanical trade setup from the computed indicators — bias, a lower-risk
+    entry zone, the breakout trigger and the invalidation/stop. NOT advice: it is
+    a rules-based read of levels, not a personalised buy/sell call."""
+    sig = (o.get("signal") or o.get("daily_trend") or "Neutral")
+    sig = sig.replace("Uptrend", "Bullish").replace("Downtrend", "Bearish").replace("Sideways", "Neutral")
+    price = o.get("price")
+    vwap, orh, orl = o.get("vwap"), o.get("or_high"), o.get("or_low")
+    dlow, dhigh = o.get("day_low"), o.get("day_high")
+    ds = o.get("daily_stats") or {}
+    from_hi = ds.get("from_52w_high")
+    bull = "bull" in sig.lower()
+    bear = "bear" in sig.lower()
+
+    def rs(v):
+        return f"₹{v:,.2f}" if isinstance(v, (int, float)) else None
+
+    s = {"bias": sig}
+    support = vwap or orl or dlow
+    trigger = orh or dhigh
+    if bull:
+        s["entry_zone"] = (f"Pullback toward {rs(support)} (VWAP / intraday support) that holds"
+                           if support else "On a pullback that holds support")
+        s["trigger"] = (f"5-min close above {rs(trigger)}" if trigger else "A fresh intraday high")
+        s["stop"] = (f"Below {rs(orl or dlow)}" if (orl or dlow) else "Below intraday support")
+        if from_hi is not None and from_hi >= -2:
+            s["timing"] = ("Momentum is strong (near the 52-week high). Mechanically, the lower-risk "
+                           "entry is a shallow pullback that holds above VWAP — chasing an extended "
+                           "breakout carries more risk.")
+        else:
+            s["timing"] = ("Setup is constructive. A pullback into the support zone that holds, or a "
+                           "confirmed move above the trigger, is the mechanically lower-risk entry — "
+                           "rather than buying mid-move.")
+    elif bear:
+        s["entry_zone"] = "No long setup — trend is down."
+        resist = vwap or orh or dhigh
+        s["trigger"] = (f"Only on a reclaim of {rs(resist)}" if resist else "Only once it stabilises")
+        s["stop"] = None
+        s["timing"] = ("Not a low-risk time to buy: price is below VWAP in a downtrend. Mechanically, "
+                       "waiting for stabilisation above the trigger avoids catching a falling move.")
+    else:
+        s["entry_zone"] = (f"Range-bound — better near support {rs(orl or dlow)}" if (orl or dlow)
+                           else "Range-bound — better near support")
+        s["trigger"] = (f"A 5-min close above {rs(orh)} tilts it bullish" if orh else "A break of the range")
+        s["stop"] = (f"Below {rs(orl or dlow)}" if (orl or dlow) else "Below the range low")
+        s["timing"] = ("No clear edge right now (sideways). Buying mid-range has poor risk-reward; a break "
+                       "of the trigger or a tested support bounce is more favourable.")
+    return s
 
 
 def demo_analysis(symbol: str) -> dict:

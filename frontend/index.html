@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Option OI Dashboard</title>
   <script>try{if(localStorage.getItem('oi-theme')==='light')document.documentElement.classList.add('light');}catch(e){}</script>
-  <link rel="stylesheet" href="style.css?v=26" />
+  <link rel="stylesheet" href="style.css?v=28" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
   <script src="app.js?v=8" defer></script>
-  <script src="journal.js?v=25" defer></script>
+  <script src="journal.js?v=27" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -27,7 +27,10 @@
       <button id="themeBtn" class="theme-btn" title="Toggle light / dark theme">🌙</button>
     </div>
     <div class="hsearch">
-      <input id="stockSearch" type="text" placeholder="🔍 Search a stock…" autocomplete="off" spellcheck="false" />
+      <input id="stockSearch" type="search" name="stocksearch" placeholder="🔍 Search a stock…"
+             autocomplete="off" autocapitalize="off" spellcheck="false"
+             data-lpignore="true" data-1p-ignore data-form-type="other" aria-autocomplete="list"
+             readonly onfocus="this.removeAttribute('readonly')" />
       <div id="stockSearchResults" class="hsearch-results hidden"></div>
     </div>
     <div class="controls" id="oiControls">
@@ -275,7 +278,7 @@
         <button id="anaCloseBtn" class="jbtn">Close</button>
       </div>
       <div id="anaBody"><p class="modal-sub">Loading…</p></div>
-      <p class="modal-sub" style="margin-top:10px"><b>Not buy/sell advice.</b> Technicals are a mechanical read of trend/momentum from Fyers history; fundamentals are from Yahoo Finance (may lag). For information only.</p>
+      <p class="modal-sub" style="margin-top:10px"><b>Not buy/sell advice.</b> Technicals are a mechanical read of trend/momentum from Fyers history; fundamentals are from Screener.in (reported figures, may lag). For information only — not a personalised recommendation.</p>
     </div>
   </div>
 
