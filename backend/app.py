@@ -73,7 +73,7 @@ async def _gate_and_cache(request: Request, call_next):
     # 1) password gate (only when enabled)
     if _APP_PASSWORD:
         path = request.url.path
-        allowed = path in ("/login", "/healthz")
+        allowed = path in ("/login", "/healthz", "/api/stock/fundamentals_diag")
         if not allowed and request.cookies.get("jpass") != _auth_token():
             if path.startswith("/api/") or path.startswith("/auth/"):
                 return JSONResponse({"detail": "auth_required"}, status_code=401)
@@ -522,6 +522,13 @@ def api_stock_fundamentals(symbol: str = Query(...)):
     if _source.name == "fyers":
         return fundamentals.get(sym)
     return fundamentals.demo(sym)
+
+
+@app.get("/api/stock/fundamentals_diag")
+def api_stock_fundamentals_diag(symbol: str = Query("RELIANCE")):
+    """Temporary, un-gated diagnostic for Yahoo fundamentals on the cloud host.
+    Reveals only whether the Yahoo handshake works (no user data)."""
+    return fundamentals.diag(symbol)
 
 
 @app.get("/healthz")

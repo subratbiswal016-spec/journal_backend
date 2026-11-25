@@ -30,7 +30,9 @@ _OVERRIDES: dict[str, str] = {
 }
 
 _OK_TTL = 0.0             # ok results live until the IST date rolls over
-_FAIL_TTL = 1800.0        # re-try a failed symbol after 30 min
+_FAIL_TTL = 90.0          # re-try a failed symbol after 90s (cloud hosts can
+                          # fail a cold handshake — don't look broken for ages)
+_LAST_REASON = ""         # short reason the last fetch failed (for diagnosis)
 
 _cache: dict[str, dict] = {}      # sym -> {"date","ts","ok","data"}
 _lock = threading.Lock()
@@ -45,37 +47,67 @@ def _ist_date() -> str:
     return datetime.now(_IST).strftime("%Y-%m-%d")
 
 
+def _agree_consent(s: requests.Session, resp) -> None:
+    """When Yahoo redirects to its EU/GDPR consent wall (guce.yahoo.com), accept
+    once so the session gets the cookies needed for a crumb. Best-effort."""
+    try:
+        import re
+        html = resp.text or ""
+        if "consent" not in (resp.url or "") and "guce" not in (resp.url or ""):
+            return
+        csrf = re.search(r'name="csrfToken"[^>]*value="([^"]+)"', html)
+        sess = re.search(r'name="sessionId"[^>]*value="([^"]+)"', html)
+        if not (csrf and sess):
+            return
+        s.post("https://consent.yahoo.com/v2/collectConsent",
+               data={"agree": ["agree", "agree"], "consentUUID": "default",
+                     "sessionId": sess.group(1), "csrfToken": csrf.group(1),
+                     "originalDoneUrl": "https://finance.yahoo.com/",
+                     "namespace": "yahoo"}, timeout=8)
+    except Exception:  # noqa: BLE001 - consent is best-effort
+        pass
+
+
 def _ensure_crumb(force: bool = False) -> str:
-    """Prime cookies + fetch a crumb, reusing the session for ~25 min."""
+    """Prime cookies (handling the EU consent wall) + fetch a crumb, reusing the
+    session for ~25 min. Raises with a short reason so failures are diagnosable."""
     global _session, _crumb, _crumb_ts
     with _sess_lock:
         now = time.time()
         if (not force) and _session is not None and _crumb and now - _crumb_ts < 1500:
             return _crumb
         s = requests.Session()
-        s.headers.update({"User-Agent": _UA, "Accept": "*/*",
-                          "Accept-Language": "en-US,en;q=0.9"})
-        # Prime cookies — try fc.yahoo.com first, then a real quote page.
-        for url in ("https://fc.yahoo.com/",
-                    "https://finance.yahoo.com/quote/RELIANCE.NS"):
+        s.headers.update({
+            "User-Agent": _UA,
+            "Accept": "text/html,application/xhtml+xml,application/json,*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
+        # Prime cookies — a real quote page triggers the consent redirect if any.
+        for url in ("https://finance.yahoo.com/quote/RELIANCE.NS",
+                    "https://fc.yahoo.com/",
+                    "https://finance.yahoo.com/"):
             try:
-                s.get(url, timeout=8)
+                r = s.get(url, timeout=8, allow_redirects=True)
+                _agree_consent(s, r)
                 if s.cookies:
                     break
             except requests.RequestException:
                 continue
         crumb = ""
-        for host in ("query2.finance.yahoo.com", "query1.finance.yahoo.com"):
+        last = ""
+        for host in ("query1.finance.yahoo.com", "query2.finance.yahoo.com"):
             try:
                 r = s.get(f"https://{host}/v1/test/getcrumb", timeout=8)
                 txt = (r.text or "").strip()
-                if txt and "<" not in txt and len(txt) < 40:
+                last = f"crumb {r.status_code}"
+                if r.status_code == 200 and txt and "<" not in txt and len(txt) < 40:
                     crumb = txt
                     break
-            except requests.RequestException:
+            except requests.RequestException as e:
+                last = "crumb " + type(e).__name__
                 continue
         if not crumb:
-            raise RuntimeError("could not obtain Yahoo crumb")
+            raise RuntimeError(f"no-crumb ({last or 'no cookies'})")
         _session, _crumb, _crumb_ts = s, crumb, now
         return crumb
 
@@ -200,17 +232,44 @@ def get(ticker: str) -> dict:
             if c["ok"] or (now - c["ts"] < _FAIL_TTL):
                 return c["data"]
 
+    global _LAST_REASON
     try:
         data = _map(_fetch_raw(ysym), sym)
+        _LAST_REASON = ""
     except Exception as e:  # noqa: BLE001 - fundamentals are best-effort
-        data = {"ok": False, "symbol": sym,
+        _LAST_REASON = f"{type(e).__name__}: {str(e)[:80]}"
+        data = {"ok": False, "symbol": sym, "reason": _LAST_REASON,
                 "note": "Fundamentals are temporarily unavailable for this stock."}
-        _ = e
 
     with _lock:
         _cache[sym] = {"date": today, "ts": now,
                        "ok": bool(data.get("ok")), "data": data}
     return data
+
+
+def diag(ticker: str = "RELIANCE") -> dict:
+    """Uncached diagnostic: fetch once and report exactly what happened. Used by
+    the /api/stock/fundamentals_diag endpoint to debug cloud (Render) failures."""
+    sym = (ticker or "RELIANCE").strip().upper()
+    ysym = _OVERRIDES.get(sym, sym + _SUFFIX)
+    out: dict = {"symbol": sym, "ysym": ysym}
+    try:
+        crumb = _ensure_crumb(force=True)
+        out["crumb_ok"] = True
+        out["crumb_len"] = len(crumb)
+    except Exception as e:  # noqa: BLE001
+        out["crumb_ok"] = False
+        out["crumb_error"] = f"{type(e).__name__}: {str(e)[:120]}"
+        return out
+    try:
+        res = _fetch_raw(ysym)
+        out["fetch_ok"] = True
+        out["name"] = ((res.get("price") or {}).get("longName"))
+        out["modules"] = sorted(res.keys())
+    except Exception as e:  # noqa: BLE001
+        out["fetch_ok"] = False
+        out["fetch_error"] = f"{type(e).__name__}: {str(e)[:120]}"
+    return out
 
 
 def demo(ticker: str) -> dict:
