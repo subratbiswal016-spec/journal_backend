@@ -454,62 +454,210 @@
     document.addEventListener("click", (e) => { if (!e.target.closest(".hsearch")) hide(); });
   })();
 
-  async function analyzeStock(sym) {
-    $("anaTitle").textContent = sym + " · analysis";
-    $("anaBody").innerHTML = `<p class="modal-sub">Loading ${esc(sym)}…</p>`;
-    $("analyzeModal").classList.remove("hidden");
-    try {
-      const r = await fetch("/api/screener/analyze?symbol=" + encodeURIComponent(sym));
-      if (r.status === 401) { $("anaBody").innerHTML = `<p class="jnote err">Log in to Fyers on the Dashboard tab first.</p>`; return; }
-      const d = await r.json();
-      if (!r.ok || d.ok === false) { $("anaBody").innerHTML = `<p class="jnote">${esc(d.note || d.detail || "No analysis available.")}</p>`; return; }
-      renderAnalysis(d);
-    } catch (err) {
-      $("anaBody").innerHTML = `<p class="jnote err">Could not analyse: ${esc(err.message)}</p>`;
-    }
+  // ---- formatting helpers for the stock detail view ----
+  const _n = (v) => (v == null || v === "" || isNaN(v)) ? null : Number(v);
+  const money = (v) => { v = _n(v); return v == null ? "—" : "₹" + fmt(v, 2); };
+  function crore(v) {              // big ₹ amounts → Cr / Lakh Cr (Indian)
+    v = _n(v); if (v == null) return "—";
+    const cr = v / 1e7;
+    if (cr >= 1e5) return "₹" + fmt(cr / 1e5, 2) + " L Cr";
+    if (cr >= 100) return "₹" + fmt(cr, 0) + " Cr";
+    return "₹" + fmt(cr, 2) + " Cr";
   }
-  function renderAnalysis(d) {
-    const scls = /bull/i.test(d.signal) ? "bull" : /bear/i.test(d.signal) ? "bear" : "flat";
-    const money = (v) => (v != null ? "₹" + fmt(v, 2) : "—");
-    const row = (k, v, cls) => `<div class="ana-row"><span>${k}</span><b class="${cls || ""}">${v}</b></div>`;
-    const sect = (title) => `<div class="ana-sect">${title}</div>`;
-    let html =
-      `<div class="ana-head"><span class="sig ${scls}" style="font-size:14px;padding:4px 12px">${esc(d.signal || "—")}</span>` +
-      (d.chg_pct != null ? `<span class="ana-trend ${d.chg_pct >= 0 ? "pos" : "neg"}">${d.chg_pct >= 0 ? "+" : ""}${d.chg_pct}%</span>` : "") +
-      `</div>`;
+  function volh(v) {               // share volume → Cr / L / k
+    v = _n(v); if (v == null) return "—";
+    if (v >= 1e7) return fmt(v / 1e7, 2) + " Cr";
+    if (v >= 1e5) return fmt(v / 1e5, 2) + " L";
+    if (v >= 1e3) return fmt(v / 1e3, 1) + "k";
+    return fmt(v, 0);
+  }
+  const pctF = (v) => { v = _n(v); return v == null ? "—" : (v >= 0 ? "" : "") + fmt(v * 100, 2) + "%"; }; // fraction→%
+  const pctP = (v, d) => { v = _n(v); return v == null ? "—" : fmt(v, d == null ? 1 : d) + "%"; };          // already %
+  const numF = (v, d) => { v = _n(v); return v == null ? "—" : fmt(v, d == null ? 2 : d); };
+  const signCls = (v) => { v = _n(v); return v == null ? "" : v >= 0 ? "pos" : "neg"; };
 
-    if (d.chart && (d.chart.price || []).length > 1) {
-      html += sect("📊 " + esc(d.chart.title || "Price")) +
-        `<div class="ana-chart"><canvas id="anaChart"></canvas></div>`;
+  let anaState = null;            // {sym, tech, fund, fundLoading, tab}
+
+  async function analyzeStock(symIn) {
+    const sym = (symIn || "").toUpperCase();
+    anaState = { sym, tech: null, fund: null, fundLoading: true, tab: "tech" };
+    $("anaTitle").textContent = sym;
+    $("analyzeModal").classList.remove("hidden");
+    $("anaBody").innerHTML = `<p class="modal-sub">Loading ${esc(sym)}…</p>`;
+
+    // Fundamentals (Yahoo) and technicals (Fyers) are independent — fetch both
+    // in parallel. Fundamentals work even when not logged in to Fyers.
+    const techP = fetch("/api/screener/analyze?symbol=" + encodeURIComponent(sym))
+      .then(async (r) => ({ r, d: await r.json().catch(() => ({})) }));
+    fetch("/api/stock/fundamentals?symbol=" + encodeURIComponent(sym))
+      .then((r) => (r.ok ? r.json() : { ok: false }))
+      .catch(() => ({ ok: false }))
+      .then((f) => { if (anaState && anaState.sym === sym) { anaState.fund = f; anaState.fundLoading = false; renderAnalysisShell(); } });
+
+    try {
+      const { r, d } = await techP;
+      if (r.status === 401) anaState.tech = { ok: false, note: "Log in to Fyers on the Dashboard tab to see live technicals (fundamentals still load)." };
+      else if (!r.ok || d.ok === false) anaState.tech = { ok: false, note: d.note || d.detail || "No technical data available." };
+      else anaState.tech = d;
+    } catch (err) {
+      anaState.tech = { ok: false, note: "Could not load technicals: " + err.message };
     }
+    if (anaState && anaState.sym === sym) renderAnalysisShell();
+  }
 
+  function renderAnalysisShell() {
+    const s = anaState; if (!s) return;
+    const t = s.tech || {}, f = s.fund || {};
+    const name = (f.ok && f.name) ? f.name : s.sym;
+    const sig = t.ok ? t.signal : null;
+    const scls = /bull/i.test(sig || "") ? "bull" : /bear/i.test(sig || "") ? "bear" : "flat";
+    const price = (t.ok && t.price != null) ? t.price : (f.ok ? f.price_yahoo : null);
+    const chg = (t.ok && t.chg_pct != null) ? t.chg_pct : (f.ok ? f.chg_pct_yahoo : null);
+    $("anaTitle").textContent = s.sym;
+
+    const sub = [f.sector, f.industry].filter(Boolean).map(esc).join(" · ");
+    let head = `<div class="ana-top">` +
+      `<div class="ana-id"><div class="ana-name">${esc(name)}</div>` +
+      (sub ? `<div class="ana-ind">${sub}</div>` : `<div class="ana-ind">${esc(s.sym)} · NSE</div>`) + `</div>` +
+      `<div class="ana-px">` +
+      (price != null ? `<div class="ana-price">${money(price)}</div>` : "") +
+      (chg != null ? `<div class="ana-trend ${chg >= 0 ? "pos" : "neg"}">${chg >= 0 ? "+" : ""}${fmt(chg, 2)}%</div>` : "") +
+      (sig ? `<span class="sig ${scls}">${esc(sig)}</span>` : "") +
+      `</div></div>`;
+
+    const hasAbout = f.ok && (f.summary || f.website);
+    const tabs = [["tech", "Technicals"], ["fund", "Fundamentals"]];
+    if (hasAbout) tabs.push(["about", "About"]);
+    if (s.tab === "about" && !hasAbout) s.tab = "fund";
+    const tabBar = `<div class="ana-tabs">` + tabs.map(([k, lbl]) =>
+      `<button class="ana-tab${s.tab === k ? " on" : ""}" data-tab="${k}">${lbl}` +
+      (k === "fund" && s.fundLoading ? ` <span class="ana-spin"></span>` : "") + `</button>`).join("") + `</div>`;
+
+    let body = "";
+    if (s.tab === "tech") body = techTabHtml(t, scls);
+    else if (s.tab === "fund") body = fundTabHtml(f, s.fundLoading, price);
+    else body = aboutTabHtml(f);
+
+    $("anaBody").innerHTML = head + tabBar + `<div class="ana-tabbody">` + body + `</div>`;
+    Array.from($("anaBody").querySelectorAll(".ana-tab")).forEach((b) =>
+      b.addEventListener("click", () => { s.tab = b.dataset.tab; renderAnalysisShell(); }));
+    if (s.tab === "tech" && t.ok && t.chart && (t.chart.price || []).length > 1)
+      drawAnaChart(t.chart, scls);
+  }
+
+  function techTabHtml(d, scls) {
+    if (!d.ok) return `<p class="jnote">${esc(d.note || "No technical data.")}</p>`;
+    const row = (k, v, cls) => `<div class="ana-row"><span>${k}</span><b class="${cls || ""}">${v}</b></div>`;
+    const sect = (t) => `<div class="ana-sect">${t}</div>`;
+    let html = "";
+    if (d.chart && (d.chart.price || []).length > 1)
+      html += sect("📊 " + esc(d.chart.title || "Price")) + `<div class="ana-chart"><canvas id="anaChart"></canvas></div>`;
     if (d.intraday) {
-      const vwapCls = d.above_vwap ? "pos" : "neg";
       html += sect("📍 Intraday (5-min)") + `<div class="ana-grid">` +
         row("Price", money(d.price)) +
-        row("VWAP", money(d.vwap) + (d.vwap != null ? (d.above_vwap ? " ▲" : " ▼") : ""), vwapCls) +
-        row("Day open", money(d.day_open)) +
-        row("Prev close", money(d.prev_close)) +
-        row("Day high", money(d.day_high)) +
-        row("Day low", money(d.day_low)) +
-        row("5-min 9-EMA", money(d.i_ema9)) +
-        row("5-min 20-EMA", money(d.i_ema20)) +
+        row("VWAP", money(d.vwap) + (d.vwap != null ? (d.above_vwap ? " ▲" : " ▼") : ""), d.above_vwap ? "pos" : "neg") +
+        row("Day open", money(d.day_open)) + row("Prev close", money(d.prev_close)) +
+        row("Day high", money(d.day_high)) + row("Day low", money(d.day_low)) +
+        row("5-min 9-EMA", money(d.i_ema9)) + row("5-min 20-EMA", money(d.i_ema20)) +
         row("5-min RSI", d.i_rsi != null ? d.i_rsi : "—") +
-        row("Opening range", money(d.or_low) + " – " + money(d.or_high)) +
-        `</div>`;
+        row("Opening range", money(d.or_low) + " – " + money(d.or_high)) + `</div>`;
     }
     if (d.daily_trend) {
       html += sect("📈 Daily swing context") + `<div class="ana-grid">` +
         row("Daily trend", esc(d.daily_trend)) +
         row("Daily RSI", d.daily_rsi != null ? d.daily_rsi : "—") +
-        row("20-EMA", money(d.ema20)) +
-        row("50-EMA", money(d.ema50)) +
+        row("20-EMA", money(d.ema20)) + row("50-EMA", money(d.ema50)) + `</div>`;
+    }
+    const ds = d.daily_stats;
+    if (ds) {
+      html += sect("📅 Positional (daily)") + `<div class="ana-grid">` +
+        row("52-wk high", money(ds.week52_high) + (ds.from_52w_high != null ? ` <small>(${ds.from_52w_high >= 0 ? "+" : ""}${ds.from_52w_high}%)</small>` : ""), signCls(ds.from_52w_high)) +
+        row("52-wk low", money(ds.week52_low) + (ds.from_52w_low != null ? ` <small>(${ds.from_52w_low >= 0 ? "+" : ""}${ds.from_52w_low}%)</small>` : ""), signCls(ds.from_52w_low)) +
+        row("50-DMA", money(ds.sma50)) + row("200-DMA", money(ds.sma200)) +
+        row("ATR(14)", ds.atr14 != null ? money(ds.atr14) + (ds.atr_pct != null ? ` <small>(${ds.atr_pct}%)</small>` : "") : "—") +
+        row("Rel. volume", ds.rel_vol != null ? ds.rel_vol + "×" : "—", (ds.rel_vol || 0) >= 1.5 ? "pos" : "") +
         `</div>`;
+      const rets = [["1W", ds.ret_1w], ["1M", ds.ret_1m], ["3M", ds.ret_3m], ["6M", ds.ret_6m], ["1Y", ds.ret_1y]].filter((x) => x[1] != null);
+      if (rets.length) html += sect("↗ Returns") + `<div class="ana-rets">` +
+        rets.map(([k, v]) => `<div class="ana-ret"><span>${k}</span><b class="${signCls(v)}">${v >= 0 ? "+" : ""}${v}%</b></div>`).join("") + `</div>`;
     }
     html += sect("📝 Read") + `<ul class="ana-notes">` +
       (d.notes || []).map((n) => `<li>${esc(n)}</li>`).join("") + `</ul>`;
-    $("anaBody").innerHTML = html;
-    if (d.chart && (d.chart.price || []).length > 1) drawAnaChart(d.chart, scls);
+    return html;
+  }
+
+  const RECO = { strong_buy: ["Strong Buy", "pos"], buy: ["Buy", "pos"], hold: ["Hold", "warn"], underperform: ["Underperform", "neg"], sell: ["Sell", "neg"], none: ["—", ""] };
+  function fundTabHtml(f, loading, techPrice) {
+    if (!f || (!f.ok && loading)) return `<p class="modal-sub">Loading fundamentals…</p>`;
+    if (!f.ok) return `<p class="jnote">${esc(f.note || "Fundamentals are temporarily unavailable for this stock.")}</p>`;
+    const row = (k, v, cls) => `<div class="ana-row"><span>${k}</span><b class="${cls || ""}">${v}</b></div>`;
+    const sect = (t) => `<div class="ana-sect">${t}</div>`;
+    // key-stat chips
+    const chips = [
+      ["Market cap", crore(f.market_cap)], ["P/E (TTM)", numF(f.pe)],
+      ["EPS (TTM)", money(f.eps)], ["P/B", numF(f.pb)],
+      ["Div yield", pctF(f.div_yield)], ["ROE", pctF(f.roe)],
+      ["Beta", numF(f.beta)], ["52-wk range", money(f.week52_low) + " – " + money(f.week52_high)],
+    ];
+    let html = `<div class="ana-chips">` + chips.map(([k, v]) =>
+      `<div class="ana-chip"><div class="k">${k}</div><div class="v">${v}</div></div>`).join("") + `</div>`;
+
+    html += sect("💰 Valuation") + `<div class="ana-grid">` +
+      row("Market cap", crore(f.market_cap)) + row("Enterprise value", crore(f.enterprise_value)) +
+      row("P/E (TTM)", numF(f.pe)) + row("Forward P/E", numF(f.forward_pe)) +
+      row("PEG ratio", numF(f.peg)) + row("Price / Book", numF(f.pb)) +
+      row("EPS (TTM)", money(f.eps)) + row("Book value", money(f.book_value)) +
+      row("Dividend yield", pctF(f.div_yield)) + row("Dividend / share", f.div_rate ? money(f.div_rate) : "—") +
+      `</div>`;
+
+    html += sect("📊 Profitability & growth") + `<div class="ana-grid">` +
+      row("ROE", pctF(f.roe)) + row("ROA", pctF(f.roa)) +
+      row("Profit margin", pctF(f.profit_margin)) + row("Operating margin", pctF(f.oper_margin)) +
+      row("Revenue growth (YoY)", pctF(f.rev_growth), signCls(f.rev_growth)) +
+      row("Earnings growth (YoY)", pctF(f.earn_growth), signCls(f.earn_growth)) +
+      `</div>`;
+
+    html += sect("🏦 Financial health") + `<div class="ana-grid">` +
+      row("Total revenue", crore(f.total_revenue)) + row("EBITDA", crore(f.ebitda)) +
+      row("Total cash", crore(f.total_cash)) + row("Total debt", crore(f.total_debt)) +
+      row("Debt / equity", f.debt_to_equity != null ? numF(f.debt_to_equity) + "×" : "—") +
+      row("Current ratio", numF(f.current_ratio)) +
+      `</div>`;
+
+    // analyst targets
+    const tgt = f.target_mean, lo = f.target_low, hi = f.target_high;
+    const cur = _n(techPrice) != null ? _n(techPrice) : _n(f.price_yahoo);
+    if (tgt != null || f.recommendation) {
+      const rc = RECO[f.recommendation] || RECO.none;
+      html += sect("🎯 Analyst view");
+      html += `<div class="ana-row"><span>Consensus</span><b><span class="reco ${rc[1]}">${rc[0]}</span>` +
+        (f.num_analysts ? ` <small>(${f.num_analysts} analysts)</small>` : "") + `</b></div>`;
+      if (tgt != null) html += `<div class="ana-row"><span>Mean target</span><b>${money(tgt)}` +
+        (cur != null && cur ? ` <small class="${tgt >= cur ? "pos" : "neg"}">(${tgt >= cur ? "+" : ""}${fmt((tgt - cur) / cur * 100, 1)}%)</small>` : "") + `</b></div>`;
+      if (lo != null && hi != null && hi > lo) {
+        const pos = cur != null ? Math.max(0, Math.min(100, (cur - lo) / (hi - lo) * 100)) : null;
+        html += `<div class="ana-tgt"><div class="ana-tgt-bar">` +
+          (pos != null ? `<span class="ana-tgt-cur" style="left:${pos}%" title="Current ${money(cur)}"></span>` : "") +
+          `</div><div class="ana-tgt-lbl"><span>${money(lo)}</span><span>low · high</span><span>${money(hi)}</span></div></div>`;
+      }
+    }
+    html += `<p class="ana-src">Fundamentals: ${esc(f.source || "Yahoo Finance")}${f.exchange ? " · " + esc(f.exchange) : ""}. Figures are TTM/latest reported and may lag.</p>`;
+    return html;
+  }
+
+  function aboutTabHtml(f) {
+    if (!f || !f.ok) return `<p class="jnote">No company profile available.</p>`;
+    let html = "";
+    if (f.summary) html += `<p class="ana-about">${esc(f.summary)}</p>`;
+    const row = (k, v) => `<div class="ana-row"><span>${k}</span><b>${v}</b></div>`;
+    html += `<div class="ana-grid">` +
+      (f.sector ? row("Sector", esc(f.sector)) : "") +
+      (f.industry ? row("Industry", esc(f.industry)) : "") +
+      (f.employees ? row("Employees", fmt(f.employees, 0)) : "") +
+      (f.shares_out ? row("Shares outstanding", volh(f.shares_out)) : "") +
+      `</div>`;
+    if (f.website) html += `<p class="ana-src"><a href="${esc(f.website)}" target="_blank" rel="noopener noreferrer">${esc(f.website)}</a></p>`;
+    return html;
   }
   let anaChart = null;
   function drawAnaChart(c, scls) {

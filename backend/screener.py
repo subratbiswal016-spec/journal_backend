@@ -391,6 +391,58 @@ def _rsi(closes: list[float], period: int = 14) -> float | None:
     return round(100 - 100 / (1 + rs), 1)
 
 
+def _sma(values: list[float], period: int) -> float | None:
+    if len(values) < period:
+        return None
+    return sum(values[-period:]) / period
+
+
+def _daily_stats(daily: list[list]) -> dict:
+    """Swing/positional technicals from daily candles: 52-week range,
+    50/200 SMAs, ATR(14) volatility, trailing returns, relative volume."""
+    rows = [c for c in (daily or []) if c and len(c) >= 6]
+    if len(rows) < 20:
+        return {}
+    closes = [float(c[4]) for c in rows]
+    highs = [float(c[2]) for c in rows]
+    lows = [float(c[3]) for c in rows]
+    vols = [float(c[5] or 0) for c in rows]
+    price = closes[-1]
+    win = rows[-252:] if len(rows) >= 252 else rows
+    hi52 = max(float(c[2]) for c in win)
+    lo52 = min(float(c[3]) for c in win)
+    out: dict = {
+        "week52_high": round(hi52, 2),
+        "week52_low": round(lo52, 2),
+        "from_52w_high": round((price - hi52) / hi52 * 100, 1) if hi52 else None,
+        "from_52w_low": round((price - lo52) / lo52 * 100, 1) if lo52 else None,
+        "sma50": round(_sma(closes, 50), 2) if _sma(closes, 50) else None,
+        "sma200": round(_sma(closes, 200), 2) if _sma(closes, 200) else None,
+    }
+    # ATR(14) on daily — volatility as % of price
+    trs = []
+    for i in range(1, len(rows)):
+        pc = closes[i - 1]
+        trs.append(max(highs[i] - lows[i], abs(highs[i] - pc), abs(lows[i] - pc)))
+    if len(trs) >= 14:
+        atr = sum(trs[-14:]) / 14
+        out["atr14"] = round(atr, 2)
+        out["atr_pct"] = round(atr / price * 100, 2) if price else None
+    # trailing returns (sessions ≈ periods)
+    def _ret(n):
+        if len(closes) > n and closes[-1 - n]:
+            return round((price - closes[-1 - n]) / closes[-1 - n] * 100, 1)
+        return None
+    out["ret_1w"], out["ret_1m"] = _ret(5), _ret(21)
+    out["ret_3m"], out["ret_6m"], out["ret_1y"] = _ret(63), _ret(126), _ret(252)
+    # relative volume: today vs 20-day average
+    if len(vols) >= 21:
+        avg20 = sum(vols[-21:-1]) / 20
+        out["avg_vol20"] = int(avg20)
+        out["rel_vol"] = round(vols[-1] / avg20, 2) if avg20 else None
+    return out
+
+
 def _vwap(intraday: list[list]) -> float | None:
     """Volume-weighted average price from intraday candles ([ts,o,h,l,c,v])."""
     num = den = 0.0
@@ -482,6 +534,31 @@ def analyze(symbol: str, daily: list[list], intraday: list[list] | None = None) 
         notes.append(f"Daily trend is {dtrend.lower()} (price vs 20/50-EMA)"
                      + (f", RSI {d_rsi}" if d_rsi is not None else "") + ".")
 
+    # ---- positional / swing technicals (52w range, SMAs, ATR, returns) ----
+    dstats = _daily_stats(daily)
+    if dstats:
+        out["daily_stats"] = dstats
+        price_d = dcloses[-1]
+        s50, s200 = dstats.get("sma50"), dstats.get("sma200")
+        if s50 and s200:
+            cross = "above" if s50 > s200 else "below"
+            notes.append(f"50-DMA is {cross} the 200-DMA"
+                         + (" — long-term uptrend (golden-cross side)." if s50 > s200
+                            else " — long-term downtrend (death-cross side)."))
+        if dstats.get("from_52w_high") is not None:
+            fh = dstats["from_52w_high"]
+            if fh >= -3:
+                notes.append(f"Trading near its 52-week high ({fh:+.1f}% from it) — strong relative strength.")
+            elif fh <= -40:
+                notes.append(f"Deep below its 52-week high ({fh:+.1f}%) — weak / beaten-down.")
+        if dstats.get("atr_pct") is not None:
+            notes.append(f"Daily ATR is {dstats['atr_pct']}% of price — "
+                         + ("high volatility (bigger swings)." if dstats['atr_pct'] >= 3
+                            else "moderate volatility." if dstats['atr_pct'] >= 1.5
+                            else "low volatility (tight ranges)."))
+        if dstats.get("rel_vol") is not None and dstats["rel_vol"] >= 1.5:
+            notes.append(f"Today's volume is {dstats['rel_vol']}× the 20-day average — unusual activity.")
+
     # ---- intraday (5-min) day-trading read ----
     today = _today_candles(intraday or [])
     if len(today) >= 3:
@@ -568,7 +645,7 @@ def demo_analysis(symbol: str) -> dict:
     rng = random.Random(sum(ord(c) for c in symbol))
     p = rng.uniform(150, 3000)
     daily = []
-    for i in range(80):
+    for i in range(260):
         p *= 1 + rng.uniform(-0.02, 0.023)
         o = p * (1 + rng.uniform(-0.006, 0.006))
         daily.append([i, o, max(o, p) * 1.01, min(o, p) * 0.99, p, rng.randint(1e5, 5e6)])

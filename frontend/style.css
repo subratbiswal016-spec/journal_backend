@@ -254,6 +254,53 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
   color: var(--muted); margin: 14px 0 8px; }
 .ana-trend.pos { color: var(--put); } .ana-trend.neg { color: var(--call); }
 .ana-row b.pos { color: var(--put); } .ana-row b.neg { color: var(--call); }
+.ana-row small { color: var(--muted); font-weight: 600; }
+.ana-row small.pos { color: var(--put); } .ana-row small.neg { color: var(--call); }
+
+/* --- stock detail: header + tabs --- */
+.ana-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin: 2px 0 12px; flex-wrap: wrap; }
+.ana-name { font-size: 18px; font-weight: 700; line-height: 1.2; }
+.ana-ind { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.ana-px { text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.ana-price { font-size: 18px; font-weight: 700; }
+.ana-tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+.ana-tab { background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted);
+  font-size: 13px; font-weight: 600; padding: 8px 10px; cursor: pointer; border-radius: 6px 6px 0 0; }
+.ana-tab:hover { color: var(--text); }
+.ana-tab.on { color: var(--brand, #3b82f6); border-bottom-color: var(--brand, #3b82f6); }
+.ana-spin { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--line);
+  border-top-color: var(--muted); border-radius: 50%; animation: anaSpin .7s linear infinite; vertical-align: -1px; }
+@keyframes anaSpin { to { transform: rotate(360deg); } }
+
+/* --- fundamentals: key-stat chips --- */
+.ana-chips { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 6px; }
+.ana-chip { background: var(--chip, rgba(127,127,127,.08)); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.ana-chip .k { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
+.ana-chip .v { font-size: 14px; font-weight: 700; margin-top: 2px; }
+
+/* --- returns strip --- */
+.ana-rets { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 14px; }
+.ana-ret { text-align: center; background: var(--chip, rgba(127,127,127,.08)); border: 1px solid var(--line); border-radius: 8px; padding: 7px 4px; }
+.ana-ret span { display: block; font-size: 10.5px; color: var(--muted); }
+.ana-ret b { font-size: 13px; } .ana-ret b.pos { color: var(--put); } .ana-ret b.neg { color: var(--call); }
+
+/* --- analyst recommendation + target range bar --- */
+.reco { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 20px; background: rgba(127,127,127,.15); }
+.reco.pos { background: var(--put-dim, rgba(38,166,154,.18)); color: var(--put); }
+.reco.neg { background: var(--call-dim, rgba(239,83,80,.18)); color: var(--call); }
+.reco.warn { background: rgba(245,166,35,.18); color: #d9900f; }
+.ana-tgt { margin: 8px 0 4px; }
+.ana-tgt-bar { position: relative; height: 6px; border-radius: 6px; margin: 10px 0 6px;
+  background: linear-gradient(90deg, var(--call) 0%, #f5a623 50%, var(--put) 100%); opacity: .65; }
+.ana-tgt-cur { position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--text); border: 2px solid var(--card, #fff); transform: translate(-50%, -50%); box-shadow: 0 0 0 1px var(--line); }
+.ana-tgt-lbl { display: flex; justify-content: space-between; font-size: 11px; color: var(--muted); }
+.ana-src { font-size: 11px; color: var(--muted); margin: 12px 0 0; }
+.ana-about { font-size: 13.5px; line-height: 1.6; color: var(--text); margin: 0 0 12px; }
+@media (max-width: 560px) {
+  .ana-chips { grid-template-columns: repeat(2, 1fr); }
+  .ana-rets { grid-template-columns: repeat(3, 1fr); }
+}
 .light .sig.bull { color: #0f766e; } .light .sig.bear { color: #c0392b; }
 .pill.Bullish { background: var(--put-dim); color: var(--put); }
 .pill.Bearish { background: var(--call-dim); color: var(--call); }

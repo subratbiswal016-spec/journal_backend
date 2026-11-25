@@ -23,7 +23,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                RedirectResponse, Response)
 from fastapi.staticfiles import StaticFiles
 
-from . import analytics, config, screener
+from . import analytics, config, screener, fundamentals
 from .sources import get_source
 from .sources.base import AuthRequired
 from .journal import store as jstore, rules as jrules, analytics as janalytics
@@ -483,7 +483,7 @@ def api_screener_analyze(symbol: str = Query(...)):
         raise HTTPException(status_code=400, detail="symbol required")
     if _source.name == "fyers":
         try:
-            daily = _source.fetch_history(sym, resolution="D", days=120)
+            daily = _source.fetch_history(sym, resolution="D", days=400)
             try:
                 intraday = _source.fetch_history(sym, resolution="5", days=3)
             except Exception:  # noqa: BLE001 - intraday optional; daily still useful
@@ -494,6 +494,18 @@ def api_screener_analyze(symbol: str = Query(...)):
         except Exception as e:  # noqa: BLE001
             raise HTTPException(status_code=502, detail=f"Analyze failed: {e}")
     return screener.demo_analysis(sym)
+
+
+@app.get("/api/stock/fundamentals")
+def api_stock_fundamentals(symbol: str = Query(...)):
+    """Company fundamentals (valuation, financials, analyst view) from Yahoo
+    Finance — independent of the Fyers budget. Best-effort: degrades gracefully."""
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        raise HTTPException(status_code=400, detail="symbol required")
+    if _source.name == "fyers":
+        return fundamentals.get(sym)
+    return fundamentals.demo(sym)
 
 
 @app.get("/healthz")
