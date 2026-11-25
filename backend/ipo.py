@@ -60,16 +60,26 @@ def _rupees(v):
     return str(v).replace("Rs.", "₹").replace("  ", " ").replace(" to ", " – ").strip()
 
 
-def _fmt_date(v):
+def _parse_date(v):
     if not v:
         return None
     s = str(v).split(" ")[0]
     for fmt in ("%d-%b-%Y", "%Y-%m-%d"):
         try:
-            return datetime.strptime(s, fmt).strftime("%d %b")
+            return datetime.strptime(s, fmt).date()
         except ValueError:
             continue
-    return s
+    return None
+
+
+def _fmt_date(v):
+    d = _parse_date(v)
+    return d.strftime("%d %b") if d else (str(v).split(" ")[0] if v else None)
+
+
+def _is_today(v) -> bool:
+    d = _parse_date(v)
+    return bool(d and d == datetime.now(_IST).date())
 
 
 def _norm(it: dict, status: str) -> dict:
@@ -86,6 +96,8 @@ def _norm(it: dict, status: str) -> dict:
         "status": status,
         "sub": it.get("noOfTime"),               # times subscribed (open issues)
         "issue_size": it.get("issueSize"),
+        "opens_today": _is_today(it.get("issueStartDate")),
+        "closes_today": _is_today(it.get("issueEndDate")),
     }
 
 
@@ -149,14 +161,17 @@ def demo() -> dict:
         "open": [
             {"name": "Shree Siddhivinayak Greentech Ltd", "symbol": "SHREESIDHI",
              "price_band": "₹130 – ₹142", "open_date": "25 Nov", "close_date": "27 Nov",
-             "segment": "SME", "status": "Open", "sub": "3.42"},
+             "segment": "SME", "status": "Open", "sub": "3.42",
+             "opens_today": True, "closes_today": False},
             {"name": "Demo Capital Mainboard Ltd", "symbol": "DEMOCAP",
              "price_band": "₹540 – ₹570", "open_date": "24 Nov", "close_date": "26 Nov",
-             "segment": "Mainboard", "status": "Open", "sub": "12.80"},
+             "segment": "Mainboard", "status": "Open", "sub": "12.80",
+             "opens_today": False, "closes_today": True},
         ],
         "upcoming": [
             {"name": "Foodlink F&B Holdings (India) Ltd", "symbol": "FOODLINK",
              "price_band": "₹181 – ₹191", "open_date": "26 Nov", "close_date": "30 Nov",
-             "segment": "Mainboard", "status": "Upcoming", "sub": None},
+             "segment": "Mainboard", "status": "Upcoming", "sub": None,
+             "opens_today": False, "closes_today": False},
         ],
     }

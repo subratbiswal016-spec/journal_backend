@@ -53,6 +53,7 @@
   // ---------------------------------------------------------------- tabs
   document.querySelectorAll(".tab").forEach((btn) =>
     btn.addEventListener("click", () => switchView(btn.dataset.view)));
+  refreshIpoBadge();   // show the IPO notification badge from any screen
 
   function switchView(view) {
     document.querySelectorAll(".tab").forEach((b) =>
@@ -92,8 +93,11 @@
     const seg = x.segment === "SME" ? `<span class="ipo-seg sme">SME</span>` : `<span class="ipo-seg mb">Mainboard</span>`;
     const sub = (x.sub != null && x.sub !== "" && !isNaN(x.sub)) ? `<span class="ipo-sub">${x.sub}× subscribed</span>` : "";
     const dates = [x.open_date, x.close_date].filter(Boolean).join(" → ");
-    return `<div class="ipo-card">` +
+    const flag = x.opens_today ? `<span class="ipo-flag today">🟢 Opens today</span>`
+      : x.closes_today ? `<span class="ipo-flag last">⏰ Last day today</span>` : "";
+    return `<div class="ipo-card${x.opens_today ? " hl" : ""}">` +
       `<div class="ipo-top"><b class="ipo-name">${esc(x.name)}</b>${seg}</div>` +
+      (flag ? `<div class="ipo-flags">${flag}</div>` : "") +
       `<div class="ipo-meta">` +
       (x.price_band ? `<span>💰 ${esc(x.price_band)}</span>` : "") +
       (dates ? `<span>📅 ${esc(dates)}</span>` : "") +
@@ -103,9 +107,19 @@
   function renderIpos(d) {
     if ($("ipoUpdated")) $("ipoUpdated").textContent = d.updated ? "Updated " + d.updated : "";
     const open = d.open || [], up = d.upcoming || [];
+    const all = open.concat(up);
+    const todays = all.filter((x) => x.opens_today);
+    const closing = open.filter((x) => x.closes_today);
     let html = "";
-    if (!d.ok && !open.length && !up.length)
+    if (!d.ok && !all.length)
       html += `<p class="jnote">${esc(d.note || "IPO data is unavailable right now.")}</p>`;
+    // "today" banner — the quick answer to "any IPO today?"
+    if (todays.length || closing.length) {
+      const bits = [];
+      if (todays.length) bits.push(`<b>${todays.length}</b> opening today`);
+      if (closing.length) bits.push(`<b>${closing.length}</b> closing today (last day to apply)`);
+      html += `<div class="ipo-banner">🔔 ${bits.join(" · ")}</div>`;
+    }
     html += `<div class="ipo-sect">🟢 Open now <span class="ipo-count">${open.length}</span></div>`;
     html += open.length ? `<div class="ipo-grid">${open.map(ipoCard).join("")}</div>`
                         : `<p class="modal-sub">No IPOs open for subscription right now.</p>`;
@@ -114,6 +128,21 @@
                       : `<p class="modal-sub">No upcoming IPOs announced yet.</p>`;
     if (d.url) html += `<a class="ana-report" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">📋 Full IPO details on NSE ↗</a>`;
     $("ipoBody").innerHTML = html;
+    setIpoBadge(d);
+  }
+  // Notification badge on the IPO tab — visible from any screen.
+  function setIpoBadge(d) {
+    const b = $("ipoBadge"); if (!b) return;
+    const open = (d.open || []), up = (d.upcoming || []);
+    const todays = open.concat(up).filter((x) => x.opens_today).length;
+    const n = open.length;
+    if (!n && !todays) { b.classList.add("hidden"); return; }
+    b.textContent = todays ? "today" : String(n);
+    b.classList.toggle("today", todays > 0);
+    b.classList.remove("hidden");
+  }
+  async function refreshIpoBadge() {
+    try { setIpoBadge(await (await fetch("/api/ipos")).json()); } catch (e) { /* ignore */ }
   }
 
   // ---------------------------------------------------------- screener
