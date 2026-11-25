@@ -351,6 +351,13 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .ipo-flag { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 20px; }
 .ipo-flag.today { background: var(--put-dim, rgba(38,166,154,.18)); color: var(--put); }
 .ipo-flag.last { background: var(--call-dim, rgba(239,83,80,.18)); color: var(--call); }
+
+/* Journal sub-tabs (Journal / Capital) */
+.subtabs { display: flex; gap: 8px; max-width: 1180px; margin: 14px auto 0; padding: 0 20px; }
+.subtab { background: var(--chip, rgba(127,127,127,.08)); border: 1px solid var(--line);
+  color: var(--muted); font-size: 13px; font-weight: 600; padding: 7px 16px; border-radius: 20px; cursor: pointer; }
+.subtab:hover { color: var(--text); }
+.subtab.active { background: var(--brand, #3b82f6); border-color: var(--brand, #3b82f6); color: #fff; }
 .ana-about { font-size: 13.5px; line-height: 1.6; color: var(--text); margin: 0 0 12px; }
 @media (max-width: 560px) {
   .ana-chips { grid-template-columns: repeat(2, 1fr); }

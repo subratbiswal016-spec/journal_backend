@@ -55,24 +55,37 @@
     btn.addEventListener("click", () => switchView(btn.dataset.view)));
   refreshIpoBadge();   // show the IPO notification badge from any screen
 
+  let journalSub = "journal";          // "journal" | "capital" — sub-tab inside Journal
   function switchView(view) {
     document.querySelectorAll(".tab").forEach((b) =>
       b.classList.toggle("active", b.dataset.view === view));
+    const isJ = view === "journal";
     $("viewOI").classList.toggle("hidden", view !== "oi");
-    $("viewJournal").classList.toggle("hidden", view !== "journal");
-    $("viewCapital").classList.toggle("hidden", view !== "capital");
+    if ($("jSub")) $("jSub").classList.toggle("hidden", !isJ);
+    $("viewJournal").classList.toggle("hidden", !(isJ && journalSub === "journal"));
+    $("viewCapital").classList.toggle("hidden", !(isJ && journalSub === "capital"));
     $("viewScreener").classList.toggle("hidden", view !== "screener");
     if ($("viewIpo")) $("viewIpo").classList.toggle("hidden", view !== "ipo");
     $("viewRules").classList.toggle("hidden", view !== "rules");
     $("viewInsights").classList.toggle("hidden", view !== "insights");
     const oiCtl = $("oiControls");
     if (oiCtl) oiCtl.style.display = view === "oi" ? "" : "none";
-    if (view === "journal") loadJournal();
-    if (view === "capital") loadCapital();
+    if (isJ) { if (journalSub === "capital") loadCapital(); else loadJournal(); }
     if (view === "screener") loadScreener();
     if (view === "ipo") loadIpos();
     if (view === "rules") loadRules();
     if (view === "insights") loadInsights();
+  }
+  // Journal ↔ Capital sub-tabs (Capital now lives inside the Journal page)
+  document.querySelectorAll("#jSub .subtab").forEach((b) =>
+    b.addEventListener("click", () => setJournalSub(b.dataset.sub)));
+  function setJournalSub(sub) {
+    journalSub = sub;
+    document.querySelectorAll("#jSub .subtab").forEach((b) =>
+      b.classList.toggle("active", b.dataset.sub === sub));
+    $("viewJournal").classList.toggle("hidden", sub !== "journal");
+    $("viewCapital").classList.toggle("hidden", sub !== "capital");
+    if (sub === "capital") loadCapital(); else loadJournal();
   }
 
   // ---------------------------------------------------------- IPO calendar
