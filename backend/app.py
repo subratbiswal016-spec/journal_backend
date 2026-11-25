@@ -413,6 +413,62 @@ def api_screener(sort: str = Query("volume"), index: str = Query(screener.DEFAUL
             "scan_error": _scanner.last_error if not quotes else None, "live": True}
 
 
+# ---- ticker tape (indices + high-volume stocks) ----------------------
+_TICKER_INDEXES = ["NIFTY", "BANKNIFTY", "SENSEX"]
+_ticker_idx_cache: dict = {"ts": 0.0, "data": []}
+_TICKER_IDX_TTL = 20.0   # seconds; index spot is cheap but still cached
+
+
+def _ticker_indices():
+    """Index spot + % change, cached ~20s and only fetched during market hours."""
+    now = time.time()
+    if now - _ticker_idx_cache["ts"] < _TICKER_IDX_TTL and _ticker_idx_cache["data"]:
+        return _ticker_idx_cache["data"]
+    if not _market_open() or (_source.calls_today() if hasattr(_source, "calls_today") else 0) >= _SCAN_DAILY_BUDGET:
+        return _ticker_idx_cache["data"]   # closed / out of budget → last values
+    try:
+        data = _source.fetch_index_quotes(_TICKER_INDEXES)
+        if data:
+            _ticker_idx_cache.update(ts=now, data=data)
+    except Exception:  # noqa: BLE001 - keep last values on failure
+        pass
+    return _ticker_idx_cache["data"]
+
+
+@app.get("/api/ticker")
+def api_ticker():
+    """Scrolling ticker data: indices + top high-volume stocks. Reuses the
+    screener scanner's snapshot for stocks (no extra calls); indices are cached.
+    Everything is gated by market hours + daily budget."""
+    if _source.name != "fyers":
+        import random
+        rng = random.Random(int(time.time() // 20))
+        idx = [{"name": n, "ltp": round(rng.uniform(20000, 55000), 2),
+                "chg_pct": round(rng.uniform(-1.5, 1.5), 2)} for n in _TICKER_INDEXES]
+        stocks = []
+        for t in screener.scan_universe("nifty50")[:18]:
+            r = random.Random(sum(ord(c) for c in t))
+            stocks.append({"symbol": t, "ltp": round(r.uniform(100, 4000), 2),
+                           "chg_pct": round(r.uniform(-4, 4), 2)})
+        return {"indices": idx, "stocks": stocks, "live": False, "market_open": True}
+
+    _scanner.ensure_started()
+    _scanner.touch()                         # viewing the ticker keeps data warm
+    quotes, _total, _oldest = _scanner.snapshot()
+    rows = []
+    for q in quotes:
+        prev = float(q.get("prev_close") or 0)
+        ltp = float(q.get("ltp") or 0)
+        if prev > 0 and ltp > 0:
+            rows.append({"symbol": q.get("ticker"), "ltp": round(ltp, 2),
+                         "chg_pct": round((ltp - prev) / prev * 100, 2),
+                         "volume": int(float(q.get("volume") or 0))})
+    rows.sort(key=lambda r: -r["volume"])
+    stocks = [{"symbol": r["symbol"], "ltp": r["ltp"], "chg_pct": r["chg_pct"]} for r in rows[:18]]
+    return {"indices": _ticker_indices(), "stocks": stocks,
+            "live": True, "market_open": _market_open()}
+
+
 @app.get("/api/screener/analyze")
 def api_screener_analyze(symbol: str = Query(...)):
     """Trend/momentum analysis for one stock (data, not advice)."""

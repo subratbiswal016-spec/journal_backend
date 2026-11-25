@@ -84,6 +84,66 @@ async function init() {
   }
   await load(true);
   startTick();
+  initTicker();
+}
+
+// ------------------------------------------------------------ ticker tape
+let tickerPaused = false;
+let tickerKeys = "";
+function initTicker() {
+  const t = $("tickerToggle");
+  if (t) t.addEventListener("click", () => { tickerPaused = !tickerPaused; applyTickerPaused(); });
+  loadTicker();
+  setInterval(() => {
+    if (document.hidden) return;
+    // during market hours refresh often; when closed just keep last values
+    if (typeof marketStatus === "function" && !marketStatus().open && tickerKeys) return;
+    loadTicker();
+  }, 20000);
+}
+function applyTickerPaused() {
+  const tr = $("tickerTrack"), btn = $("tickerToggle");
+  if (tr) tr.classList.toggle("paused", tickerPaused);
+  if (btn) { btn.textContent = tickerPaused ? "▶" : "⏸"; btn.title = tickerPaused ? "Resume" : "Pause"; }
+}
+async function loadTicker() {
+  try {
+    const d = await (await fetch("/api/ticker")).json();
+    const items = [];
+    (d.indices || []).forEach((i) => items.push({ key: "idx:" + i.name, label: i.name, ltp: i.ltp, chg: i.chg_pct, isIdx: true }));
+    (d.stocks || []).forEach((s) => items.push({ key: "stk:" + s.symbol, label: s.symbol, ltp: s.ltp, chg: s.chg_pct }));
+    if (items.length) { $("tickerBar").classList.remove("hidden"); renderTicker(items); }
+  } catch (e) { /* keep last */ }
+}
+function tkItemHTML(it) {
+  const up = it.chg >= 0;
+  return `<span class="tk-item${it.isIdx ? " tk-idx" : ""}" data-key="${it.key}">` +
+    `<b>${it.label}</b> <span class="tk-val">${fmt(it.ltp, 2)}</span>` +
+    `<span class="tk-chg ${up ? "up" : "down"}">${up ? "▲ +" : "▼ "}${it.chg}%</span></span>`;
+}
+function renderTicker(items) {
+  const track = $("tickerTrack");
+  if (!track) return;
+  const keys = items.map((i) => i.key).join(",");
+  if (keys === tickerKeys && track.children.length) {
+    // same symbols → update values in place so the scroll never jumps
+    items.forEach((it) => {
+      track.querySelectorAll(`[data-key="${CSS.escape(it.key)}"]`).forEach((el) => {
+        const up = it.chg >= 0;
+        el.querySelector(".tk-val").textContent = fmt(it.ltp, 2);
+        const c = el.querySelector(".tk-chg");
+        c.textContent = (up ? "▲ +" : "▼ ") + it.chg + "%";
+        c.className = "tk-chg " + (up ? "up" : "down");
+      });
+    });
+    return;
+  }
+  tickerKeys = keys;
+  const one = items.map(tkItemHTML).join("");
+  track.innerHTML = one + one;          // two copies → seamless loop at -50%
+  // deterministic speed (~2.6s per item) — robust even before layout settles
+  track.style.animationDuration = Math.max(24, Math.round(items.length * 2.6)) + "s";
+  applyTickerPaused();
 }
 
 // Read ?login=ok / ?login_error=... from the Upstox callback redirect.

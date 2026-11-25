@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Option OI Dashboard</title>
   <script>try{if(localStorage.getItem('oi-theme')==='light')document.documentElement.classList.add('light');}catch(e){}</script>
-  <link rel="stylesheet" href="style.css?v=21" />
+  <link rel="stylesheet" href="style.css?v=22" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
-  <script src="app.js?v=6" defer></script>
-  <script src="journal.js?v=21" defer></script>
+  <script src="app.js?v=7" defer></script>
+  <script src="journal.js?v=22" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -40,6 +40,13 @@
       <button id="refreshBtn" title="Refresh now">⟳ <span id="countdown">--</span></button>
     </div>
   </header>
+
+  <div id="tickerBar" class="ticker hidden">
+    <button id="tickerToggle" class="ticker-toggle" title="Pause / resume">⏸</button>
+    <div class="ticker-viewport">
+      <div id="tickerTrack" class="ticker-track"></div>
+    </div>
+  </div>
 
   <div id="statusBar" class="statusbar hidden"></div>
 

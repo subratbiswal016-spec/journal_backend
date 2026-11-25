@@ -191,6 +191,25 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .scr-clear:hover { background: rgba(239,83,80,.1); }
 #screenerTable td:last-child .sig { margin: 1px 2px 1px 0; }
 
+/* --- ticker tape (indices + high-volume stocks) --- */
+.ticker { display: flex; align-items: center; height: 38px; overflow: hidden;
+  background: var(--panel); border-bottom: 1px solid var(--line); }
+.ticker-toggle { flex: 0 0 auto; width: 34px; height: 38px; border: none; cursor: pointer;
+  background: var(--panel-2); color: var(--text); font-size: 13px; border-right: 1px solid var(--line); }
+.ticker-toggle:hover { color: var(--accent, #6ea8fe); }
+.ticker-viewport { flex: 1; overflow: hidden; position: relative; }
+.ticker-track { display: inline-flex; white-space: nowrap; will-change: transform;
+  animation: tickerScroll linear infinite; }
+.ticker-track.paused, .ticker-viewport:hover .ticker-track { animation-play-state: paused; }
+@keyframes tickerScroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.tk-item { display: inline-flex; align-items: center; gap: 6px; padding: 0 16px; font-size: 13px;
+  border-right: 1px solid var(--line); line-height: 38px; }
+.tk-item b { color: var(--muted); font-weight: 700; letter-spacing: .2px; }
+.tk-idx b { color: var(--text); }
+.tk-val { font-variant-numeric: tabular-nums; color: var(--text); }
+.tk-chg { font-weight: 700; font-size: 12px; font-variant-numeric: tabular-nums; }
+.tk-chg.up { color: var(--put); } .tk-chg.down { color: var(--call); }
+
 .scr-auto { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600;
   color: var(--text); cursor: pointer; user-select: none; padding: 6px 4px; }
 .scr-auto input { width: 15px; height: 15px; accent-color: var(--accent, #6ea8fe); cursor: pointer; }

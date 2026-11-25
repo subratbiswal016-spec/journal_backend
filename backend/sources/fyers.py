@@ -263,14 +263,12 @@ class FyersDataSource(DataSource):
         """Total Fyers calls made today (shared across dashboard + screener)."""
         return calls_today()
 
-    def fetch_one_quote(self, ticker: str) -> dict | None:
-        """One rate-limited live quote via the `depth` endpoint (the /quotes
-        endpoint is blocked on this account). Returns a normalized dict or None.
-        Used one-at-a-time by the background screener scanner."""
+    def _depth_quote(self, full_symbol: str) -> dict | None:
+        """One rate-limited depth quote for any Fyers symbol (equity or index).
+        Returns normalized {ltp, open, high, low, prev_close, volume} or None."""
         fy = self._model()        # raises AuthRequired if the token is invalid
-        sym = f"NSE:{ticker}-EQ"
-        _rate_limit()             # respect 5/sec + 50/min account caps
-        resp = fy.depth(data={"symbol": sym, "ohlcv_flag": 1})
+        _rate_limit()             # respect 5/sec + 50/min + daily caps
+        resp = fy.depth(data={"symbol": full_symbol, "ohlcv_flag": 1})
         if not isinstance(resp, dict):
             return None
         if resp.get("s") == "error":
@@ -278,17 +276,42 @@ class FyersDataSource(DataSource):
             if resp.get("code") in (-8, -15, -16, -17) or "token" in msg.lower():
                 raise AuthRequired(f"Fyers token rejected: {msg}")
             return None
-        d = (resp.get("d") or {}).get(sym) or {}
+        d = (resp.get("d") or {}).get(full_symbol) or {}
         g = lambda *ks: next((d[k] for k in ks if d.get(k) not in (None, "")), None)
         ltp = g("ltp", "lp")
         if ltp in (None, 0):
             return None
         ch = g("ch")
         prev = (ltp - ch) if ch is not None else g("prev_close_price", "c")
-        return {"ticker": ticker, "ltp": ltp,
-                "open": g("o", "open_price"), "high": g("h", "high_price"),
+        return {"ltp": ltp, "open": g("o", "open_price"), "high": g("h", "high_price"),
                 "low": g("l", "low_price"), "prev_close": prev,
                 "volume": g("v", "volume", "vol")}
+
+    def fetch_one_quote(self, ticker: str) -> dict | None:
+        """One live quote for an NSE equity (used by the background scanner)."""
+        q = self._depth_quote(f"NSE:{ticker}-EQ")
+        if q:
+            q["ticker"] = ticker
+        return q
+
+    def fetch_index_quotes(self, names: list[str]) -> list[dict]:
+        """Live spot + % change for index underlyings (NIFTY, BANKNIFTY, SENSEX…).
+        A few rate-limited depth calls — used by the ticker tape."""
+        out = []
+        for nm in names:
+            fsym = FYERS_INDEX.get(nm)
+            if not fsym:
+                continue
+            try:
+                q = self._depth_quote(fsym)
+            except AuthRequired:
+                raise
+            except Exception:  # noqa: BLE001 - skip this index
+                q = None
+            if q and q.get("prev_close"):
+                chg = (q["ltp"] - q["prev_close"]) / q["prev_close"] * 100
+                out.append({"name": nm, "ltp": round(q["ltp"], 2), "chg_pct": round(chg, 2)})
+        return out
 
     def fetch_quotes(self, tickers: list[str]) -> list[dict]:
         """Live quotes for a list of NSE equities (best effort; failures skipped).
