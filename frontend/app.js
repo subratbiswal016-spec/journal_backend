@@ -140,9 +140,14 @@ function renderTicker(items) {
   }
   tickerKeys = keys;
   const one = items.map(tkItemHTML).join("");
-  track.innerHTML = one + one;          // two copies → seamless loop at -50%
+  // Repeat the set enough times that ONE half always spans the screen, so the
+  // -50% loop wraps seamlessly even when only a few items have loaded.
+  const perHalf = Math.max(1, Math.ceil(14 / items.length));
+  const half = one.repeat(perHalf);
+  track.innerHTML = half + half;        // two halves → seamless loop at -50%
+  const unit = items.length * perHalf;  // items per half
   // deterministic speed (~2.6s per item) — robust even before layout settles
-  track.style.animationDuration = Math.max(24, Math.round(items.length * 2.6)) + "s";
+  track.style.animationDuration = Math.max(24, Math.round(unit * 2.6)) + "s";
   applyTickerPaused();
 }
 
