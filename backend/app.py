@@ -648,6 +648,39 @@ def journal_sync_history(start: Optional[str] = Query(None), end: Optional[str] 
         raise HTTPException(status_code=502, detail=f"History sync failed: {e}")
 
 
+@app.get("/api/journal/history_diag")
+def journal_history_diag(start: Optional[str] = Query(None), end: Optional[str] = Query(None)):
+    """Temporary, un-gated diagnostic for the Fyers trade-history sync. Reports
+    only counts, field names and errors — never trade values/symbols."""
+    out = {"source": _source.name}
+    if _source.name != "fyers":
+        out["note"] = "not on the fyers source"
+        return out
+    out["has_method"] = hasattr(_source, "fetch_trade_history")
+    try:
+        fy = _source._model()
+        out["sdk_has_tradehistory"] = callable(getattr(fy, "tradehistory", None))
+    except AuthRequired:
+        out["auth"] = "login_required"
+        return out
+    except Exception as e:  # noqa: BLE001
+        out["model_error"] = f"{type(e).__name__}: {str(e)[:150]}"
+        return out
+    try:
+        raw = _source.fetch_trade_history(start, end)
+        out["raw_count"] = len(raw)
+        out["field_names"] = sorted(raw[0].keys()) if raw else []
+        fills = [f for f in (jsync._normalize(t) for t in raw) if f]
+        out["fills"] = len(fills)
+        dates = sorted({f["date"] for f in fills if f.get("date") != "unknown"})
+        out["date_span"] = [dates[0], dates[-1]] if dates else None
+    except AuthRequired:
+        out["auth"] = "login_required"
+    except Exception as e:  # noqa: BLE001
+        out["fetch_error"] = f"{type(e).__name__}: {str(e)[:220]}"
+    return out
+
+
 @app.post("/api/journal/import")
 async def journal_import(request: Request):
     content = (await request.body()).decode("utf-8", errors="replace")
