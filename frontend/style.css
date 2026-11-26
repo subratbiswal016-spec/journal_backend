@@ -358,6 +358,58 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
   color: var(--muted); font-size: 13px; font-weight: 600; padding: 7px 16px; border-radius: 20px; cursor: pointer; }
 .subtab:hover { color: var(--text); }
 .subtab.active { background: var(--brand, #3b82f6); border-color: var(--brand, #3b82f6); color: #fff; }
+
+/* =================== analytics Dashboard (home) =================== */
+.jcard { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.dash { max-width: 1180px; margin: 0 auto; padding: 18px 20px 40px; }
+.dash-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+.dash-head h2 { margin: 0; font-size: 20px; }
+.dash-period { display: flex; gap: 6px; }
+.dper { background: var(--chip, rgba(127,127,127,.08)); border: 1px solid var(--line); color: var(--muted);
+  font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 20px; cursor: pointer; }
+.dper:hover { color: var(--text); }
+.dper.active { background: var(--brand, #3b82f6); border-color: var(--brand, #3b82f6); color: #fff; }
+.kpi-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 16px; }
+.kpi { background: var(--card, #fff); border: 1px solid var(--line); border-radius: 14px; padding: 13px 15px; }
+.kpi-l { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
+.kpi-v { font-size: 21px; font-weight: 800; margin-top: 4px; line-height: 1.1; }
+.kpi-v.pos { color: var(--put); } .kpi-v.neg { color: var(--call); }
+.kpi-s { font-size: 11px; color: var(--muted); margin-top: 3px; }
+.dash-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.dash-grid .jcard { margin: 0; }
+.dash-grid .dash-wide { grid-column: 1 / -1; }
+.dash-ct { font-size: 13px; font-weight: 700; margin: 0 0 10px; }
+.dash-chart { height: 240px; position: relative; }
+.dash-chart canvas { width: 100% !important; height: 100% !important; }
+/* P&L calendar */
+.dash-cal .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.dash-cal .cal-head h3 { margin: 0; }
+.dash-cal .jbtn { padding: 4px 11px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+.cal-dow { text-align: center; font-size: 10px; font-weight: 700; color: var(--muted); padding-bottom: 2px; }
+.cal-cell { min-height: 46px; border-radius: 8px; border: 1px solid var(--line); padding: 4px 5px;
+  display: flex; flex-direction: column; justify-content: space-between; background: var(--chip, rgba(127,127,127,.04)); }
+.cal-cell.empty { border: none; background: transparent; }
+.cal-cell.pos { background: var(--put-dim, rgba(38,166,154,.16)); border-color: rgba(38,166,154,.35); }
+.cal-cell.neg { background: var(--call-dim, rgba(239,83,80,.14)); border-color: rgba(239,83,80,.32); }
+.cal-d { font-size: 10px; color: var(--muted); align-self: flex-end; }
+.cal-pl { font-size: 11px; font-weight: 700; }
+.cal-cell.pos .cal-pl { color: var(--put); } .cal-cell.neg .cal-pl { color: var(--call); }
+.cal-sum { margin-top: 10px; font-size: 13px; }
+.cal-sum .pos { color: var(--put); } .cal-sum .neg { color: var(--call); }
+/* recent trades table */
+.dash-tt { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dash-tt th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase;
+  border-bottom: 1px solid var(--line); padding: 6px 8px; }
+.dash-tt td { padding: 7px 8px; border-bottom: 1px solid var(--line); }
+.dash-tt .r { text-align: right; }
+.dash-tt td.pos, .dash-tt .pos { color: var(--put); } .dash-tt td.neg, .dash-tt .neg { color: var(--call); }
+@media (max-width: 900px) {
+  .kpi-row { grid-template-columns: repeat(3, 1fr); }
+  .dash-grid { grid-template-columns: 1fr; }
+  .dash-grid .dash-wide { grid-column: auto; }
+}
+@media (max-width: 520px) { .kpi-row { grid-template-columns: repeat(2, 1fr); } }
 .ana-about { font-size: 13.5px; line-height: 1.6; color: var(--text); margin: 0 0 12px; }
 @media (max-width: 560px) {
   .ana-chips { grid-template-columns: repeat(2, 1fr); }

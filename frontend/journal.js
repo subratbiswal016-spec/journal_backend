@@ -60,6 +60,7 @@
     document.querySelectorAll(".tab").forEach((b) =>
       b.classList.toggle("active", b.dataset.view === view));
     const isJ = view === "journal";
+    if ($("viewHome")) $("viewHome").classList.toggle("hidden", view !== "home");
     $("viewOI").classList.toggle("hidden", view !== "oi");
     if ($("jSub")) $("jSub").classList.toggle("hidden", !isJ);
     $("viewJournal").classList.toggle("hidden", !(isJ && journalSub === "journal"));
@@ -70,6 +71,13 @@
     $("viewInsights").classList.toggle("hidden", view !== "insights");
     const oiCtl = $("oiControls");
     if (oiCtl) oiCtl.style.display = view === "oi" ? "" : "none";
+    if (view === "home") loadHome();
+    if (view === "oi") requestAnimationFrame(() => {   // charts were sized while hidden → refit
+      try {
+        if (typeof chgChart !== "undefined" && chgChart) chgChart.resize();
+        if (typeof oiChart !== "undefined" && oiChart) oiChart.resize();
+      } catch (e) { /* ignore */ }
+    });
     if (isJ) { if (journalSub === "capital") loadCapital(); else loadJournal(); }
     if (view === "screener") loadScreener();
     if (view === "ipo") loadIpos();
@@ -156,6 +164,161 @@
   }
   async function refreshIpoBadge() {
     try { setIpoBadge(await (await fetch("/api/ipos")).json()); } catch (e) { /* ignore */ }
+  }
+
+  // ---------------------------------------------------- Dashboard (home)
+  let homePeriod = "all";
+  let homeData = null;          // last overview payload
+  let calMonth = null;          // {y, m} shown in the calendar
+  let homeBound = false;
+  const homeCharts = {};
+  const _MONF = ["January", "February", "March", "April", "May", "June", "July",
+    "August", "September", "October", "November", "December"];
+  const round2 = (v) => Math.round((+v || 0) * 100) / 100;
+  function moneyShort(v) {
+    v = +v || 0; const a = Math.abs(v), sg = v < 0 ? "-" : "";
+    if (a >= 1e7) return sg + "₹" + fmt(a / 1e7, 2) + "Cr";
+    if (a >= 1e5) return sg + "₹" + fmt(a / 1e5, 2) + "L";
+    if (a >= 1e3) return sg + "₹" + fmt(a / 1e3, 1) + "k";
+    return sg + "₹" + fmt(a, 0);
+  }
+  function homeRange(p) {
+    const iso = (d) => d.toISOString().slice(0, 10), t = new Date();
+    if (p === "this_month") return { start: iso(new Date(t.getFullYear(), t.getMonth(), 1)), end: iso(t) };
+    if (p === "3m") { const s = new Date(t); s.setDate(s.getDate() - 90); return { start: iso(s), end: iso(t) }; }
+    if (p === "1m") { const s = new Date(t); s.setDate(s.getDate() - 30); return { start: iso(s), end: iso(t) }; }
+    return { start: "", end: "" };
+  }
+  function bindHomeOnce() {
+    if (homeBound) return; homeBound = true;
+    document.querySelectorAll("#homePeriod .dper").forEach((b) =>
+      b.addEventListener("click", () => {
+        homePeriod = b.dataset.p; calMonth = null;
+        document.querySelectorAll("#homePeriod .dper").forEach((x) => x.classList.toggle("active", x === b));
+        loadHome();
+      }));
+    if ($("calPrev")) $("calPrev").addEventListener("click", () => shiftCal(-1));
+    if ($("calNext")) $("calNext").addEventListener("click", () => shiftCal(1));
+  }
+  async function loadHome() {
+    bindHomeOnce();
+    const r = homeRange(homePeriod);
+    const q = (r.start || r.end) ? `?start=${r.start}&end=${r.end}` : "";
+    try {
+      homeData = await (await fetch("/api/journal/overview" + q)).json();
+      renderHome(homeData);
+    } catch (e) {
+      if ($("homeEmpty")) $("homeEmpty").textContent = "Could not load dashboard: " + e.message;
+    }
+  }
+  function renderHome(d) {
+    const s = d.summary || {};
+    const daily = (s.daily || []).slice().sort((a, b) => (a.date < b.date ? -1 : 1));
+    let gp = 0, gl = 0, pdays = 0, ldays = 0;
+    daily.forEach((x) => { const v = +x.realized || 0; if (v > 0) { gp += v; pdays++; } else if (v < 0) { gl += -v; ldays++; } });
+    const pf = gl > 0 ? gp / gl : (gp > 0 ? Infinity : 0);
+    const dayWin = (pdays + ldays) ? pdays / (pdays + ldays) * 100 : 0;
+    const net = s.net_realized != null ? s.net_realized : (s.total_realized || 0);
+    const st = s.current_streak || {}; const stTxt = st.count ? `${st.count}${st.type === "profit" ? "🟢" : st.type === "loss" ? "🔴" : ""}` : "—";
+    const kpi = (label, val, cls, sub) => `<div class="kpi"><div class="kpi-l">${label}</div><div class="kpi-v ${cls || ""}">${val}</div>${sub ? `<div class="kpi-s">${sub}</div>` : ""}</div>`;
+    $("homeKpis").innerHTML =
+      kpi("Net P&L", signed(net), net >= 0 ? "pos" : "neg", s.total_costs ? "after ₹" + fmt(s.total_costs, 0) + " costs" : "gross") +
+      kpi("Win rate", (s.win_rate || 0) + "%", "", `${s.wins || 0}W · ${s.losses || 0}L`) +
+      kpi("Profit factor", pf === Infinity ? "∞" : fmt(pf, 2), pf >= 1 ? "pos" : "neg", "profit ÷ loss") +
+      kpi("Day win %", fmt(dayWin, 1) + "%", "", `${pdays}W · ${ldays}L days`) +
+      kpi("Avg / day", signed(s.net_avg_day != null ? s.net_avg_day : (s.avg_day || 0)), (s.net_avg_day || 0) >= 0 ? "pos" : "neg", `${s.trading_days || 0} days`) +
+      kpi("Total trades", String(s.total_trades || 0), "", `streak ${stTxt}`);
+
+    if ($("homeEmpty")) $("homeEmpty").textContent = daily.length ? "" :
+      "No trades yet — sync from Fyers/Dhan or add trades in the Journal, and your dashboard fills in automatically.";
+
+    let cum = 0, peak = 0; const labels = [], equity = [], dd = [];
+    daily.forEach((x) => { cum += (+x.realized || 0); labels.push(x.date); equity.push(round2(cum)); peak = Math.max(peak, cum); dd.push(round2(cum - peak)); });
+    drawHomeLine("homeEquity", labels, equity, "equity");
+    drawHomeLine("homeDrawdown", labels, dd, "dd");
+    drawHomeBars("homeDaily", daily);
+    drawWinLoss("homeWinLoss", pdays, ldays);
+
+    if (!calMonth) {
+      const base = daily.length ? new Date(daily[daily.length - 1].date) : new Date();
+      calMonth = { y: base.getFullYear(), m: base.getMonth() };
+    }
+    renderCal(daily);
+    renderHomeTrades(d.recent_trades || []);
+  }
+  function homeColors() {
+    const css = getComputedStyle(document.body);
+    const g = (n, f) => (css.getPropertyValue(n) || f).trim();
+    return { grid: g("--line", "rgba(127,127,127,.15)"), tick: g("--muted", "#9aa4b2"),
+      put: g("--put", "#26a69a"), call: g("--call", "#ef5350") };
+  }
+  function drawHomeLine(id, labels, data, kind) {
+    const el = $(id); if (!el || typeof Chart === "undefined") return;
+    if (homeCharts[id]) homeCharts[id].destroy();
+    const c = homeColors(), color = kind === "dd" ? c.call : c.put;
+    homeCharts[id] = new Chart(el, { type: "line",
+      data: { labels, datasets: [{ data, borderColor: color, backgroundColor: color + "22", borderWidth: 2, pointRadius: 0, fill: true, tension: .2 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (x) => "₹" + fmt(x.parsed.y, 0) } } },
+        scales: { x: { grid: { display: false }, ticks: { color: c.tick, maxTicksLimit: 6, font: { size: 10 } } }, y: { grid: { color: c.grid }, ticks: { color: c.tick, font: { size: 10 }, callback: (v) => moneyShort(v) } } } } });
+  }
+  function drawHomeBars(id, daily) {
+    const el = $(id); if (!el || typeof Chart === "undefined") return;
+    if (homeCharts[id]) homeCharts[id].destroy();
+    const c = homeColors();
+    const data = daily.map((x) => +x.realized || 0);
+    homeCharts[id] = new Chart(el, { type: "bar",
+      data: { labels: daily.map((x) => x.date), datasets: [{ data, backgroundColor: data.map((v) => v >= 0 ? c.put : c.call), borderWidth: 0 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (x) => "₹" + fmt(x.parsed.y, 0) } } },
+        scales: { x: { grid: { display: false }, ticks: { color: c.tick, maxTicksLimit: 8, font: { size: 10 } } }, y: { grid: { color: c.grid }, ticks: { color: c.tick, font: { size: 10 }, callback: (v) => moneyShort(v) } } } } });
+  }
+  function drawWinLoss(id, w, l) {
+    const el = $(id); if (!el || typeof Chart === "undefined") return;
+    if (homeCharts[id]) homeCharts[id].destroy();
+    const c = homeColors();
+    homeCharts[id] = new Chart(el, { type: "doughnut",
+      data: { labels: ["Win days", "Loss days"], datasets: [{ data: [w, l], backgroundColor: [c.put, c.call], borderWidth: 0 }] },
+      options: { responsive: true, maintainAspectRatio: false, cutout: "60%", plugins: { legend: { position: "bottom", labels: { color: c.tick, boxWidth: 12, font: { size: 11 } } } } } });
+  }
+  function shiftCal(delta) {
+    if (!calMonth) return;
+    let m = calMonth.m + delta, y = calMonth.y;
+    if (m < 0) { m = 11; y--; } if (m > 11) { m = 0; y++; }
+    calMonth = { y, m };
+    renderCal((homeData && homeData.summary && homeData.summary.daily) || []);
+  }
+  function renderCal(daily) {
+    if (!calMonth || !$("homeCal")) return;
+    const { y, m } = calMonth;
+    $("calTitle").textContent = _MONF[m] + " " + y;
+    const byDate = {}; daily.forEach((x) => { byDate[x.date] = (byDate[x.date] || 0) + (+x.realized || 0); });
+    const startDow = (new Date(y, m, 1).getDay() + 6) % 7;   // Mon=0
+    const days = new Date(y, m + 1, 0).getDate();
+    const dows = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    let cells = dows.map((d) => `<div class="cal-dow">${d}</div>`).join("");
+    for (let i = 0; i < startDow; i++) cells += `<div class="cal-cell empty"></div>`;
+    let mtot = 0, mdays = 0;
+    for (let d = 1; d <= days; d++) {
+      const ds = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      const v = byDate[ds];
+      let cls = "cal-cell", inner = `<span class="cal-d">${d}</span>`;
+      if (v != null) { cls += v > 0 ? " pos" : v < 0 ? " neg" : " flat"; inner += `<span class="cal-pl">${moneyShort(v)}</span>`; mtot += v; mdays++; }
+      cells += `<div class="${cls}">${inner}</div>`;
+    }
+    $("homeCal").innerHTML = cells;
+    $("homeCalSum").innerHTML = mdays
+      ? `<b class="${mtot >= 0 ? "pos" : "neg"}">${signed(mtot)}</b> · ${mdays} trading day${mdays > 1 ? "s" : ""}`
+      : `<span class="modal-sub">No trades this month</span>`;
+  }
+  function renderHomeTrades(trades) {
+    const rows = (trades || []).filter((t) => t.pnl != null && t.date !== "unknown").slice(0, 10);
+    if (!rows.length) { $("homeTrades").innerHTML = `<p class="modal-sub">No closed trades in this period yet.</p>`; return; }
+    $("homeTrades").innerHTML =
+      `<table class="dash-tt"><thead><tr><th>Date</th><th>Symbol</th><th>Side</th><th class="r">Qty</th><th class="r">P&L</th></tr></thead><tbody>` +
+      rows.map((t) => {
+        const pl = +t.pnl || 0, sc = (t.side === "LONG" || t.side === "BUY") ? "pos" : "neg";
+        return `<tr><td>${esc(t.date || "")}</td><td>${esc(t.symbol || "")}</td><td class="${sc}">${esc(t.side || "")}</td>` +
+          `<td class="r">${fmt(t.qty)}</td><td class="r ${pl >= 0 ? "pos" : "neg"}"><b>${signed(pl)}</b></td></tr>`;
+      }).join("") + `</tbody></table>`;
   }
 
   // ---------------------------------------------------------- screener
@@ -2124,4 +2287,7 @@
       loadRules();
     } catch (e) { rulesSaveMsg("Save failed: " + e.message, true); }
   }
+
+  // Land on the analytics Dashboard (runs last, after all declarations exist).
+  switchView("home");
 })();
