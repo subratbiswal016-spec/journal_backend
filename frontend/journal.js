@@ -365,10 +365,8 @@
       const pItem = (k, v, cls, sub) => `<div class="pnl-i"><div class="pnl-k">${k}</div><div class="pnl-v ${cls || ""}">${v}</div>${sub ? `<div class="pnl-sub">${sub}</div>` : ""}</div>`;
       $("homePnl").innerHTML = daily.length ? (
         pItem("Gross P&L", signed(s.total_realized || 0), (s.total_realized || 0) >= 0 ? "pos" : "neg") +
-        pItem("Brokerage", neg(s.total_brokerage), "neg") +
-        pItem("Other charges", neg(s.total_charges), "neg", "STT · GST · txn · stamp") +
-        pItem("Total charges", neg(s.total_costs), "neg", s.costs_estimated ? "estimated" : "actual") +
-        pItem("Net P&L", signed(net), net >= 0 ? "pos" : "neg") +
+        pItem("Brokerage", neg(s.total_brokerage), "neg", "excl. taxes") +
+        pItem("Total charges", neg(s.total_costs), "neg", s.costs_estimated ? "STT·GST·stamp (est.)" : "STT·GST·stamp") +
         `<div class="pnl-i"><div class="pnl-k">Profitable days</div><div class="pnl-bar"><span class="pb-g" style="width:${profPct}%"></span><span class="pb-r" style="width:${100 - profPct}%"></span></div><div class="pnl-sub">${profPct}% win · ${100 - profPct}% loss (${pdays}/${ldays})</div></div>`
       ) : "";
     }
@@ -395,15 +393,16 @@
   // KPI mini-gauges
   function gArc(pct, color) {
     pct = Math.max(0, Math.min(100, pct || 0));
-    const C = Math.PI * 26;
+    const C = Math.PI * 26, off = (C - C * pct / 100).toFixed(1), cs = C.toFixed(1);
     return `<svg viewBox="0 0 60 36" class="kg-arc"><path d="M4,30 A26,26 0 0 1 56,30" fill="none" stroke="var(--line)" stroke-width="6" stroke-linecap="round"/>` +
-      `<path d="M4,30 A26,26 0 0 1 56,30" fill="none" stroke="${color}" stroke-width="6" stroke-linecap="round" stroke-dasharray="${(C * pct / 100).toFixed(1)} ${C.toFixed(1)}"/>` +
+      `<path class="kg-fill" d="M4,30 A26,26 0 0 1 56,30" fill="none" stroke="${color}" stroke-width="6" stroke-linecap="round" stroke-dasharray="${cs}" stroke-dashoffset="${off}" style="--off:${off};--c:${cs}"/>` +
       `<text x="30" y="29" text-anchor="middle" class="kg-t">${Math.round(pct)}</text></svg>`;
   }
   function gDonut(green, red) {
     const tot = green + red, gp = tot ? green / tot : 0, C = 2 * Math.PI * 13;
+    const off = (C * (1 - gp)).toFixed(1), cs = C.toFixed(1);
     return `<svg viewBox="0 0 34 34" class="kg-d"><circle cx="17" cy="17" r="13" fill="none" stroke="var(--call)" stroke-width="5"/>` +
-      `<circle cx="17" cy="17" r="13" fill="none" stroke="var(--put)" stroke-width="5" stroke-dasharray="${(C * gp).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 17 17)"/></svg>`;
+      `<circle class="kg-fill" cx="17" cy="17" r="13" fill="none" stroke="var(--put)" stroke-width="5" stroke-dasharray="${cs}" stroke-dashoffset="${off}" transform="rotate(-90 17 17)" style="--off:${off};--c:${cs}"/></svg>`;
   }
   function gBar(green, red) {
     const tot = green + red, gp = tot ? Math.round(green / tot * 100) : 50;

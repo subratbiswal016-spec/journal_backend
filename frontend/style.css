@@ -429,6 +429,12 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .kg-d { width: 40px; height: 40px; }
 .kg-bar { width: 62px; height: 9px; border-radius: 6px; overflow: hidden; display: flex; background: var(--line); }
 .kg-bar .kb-g { background: var(--put); } .kg-bar .kb-r { background: var(--call); }
+/* animated gauges + bars */
+.kg-fill { animation: arcDraw .9s cubic-bezier(.3,.8,.3,1) forwards; }
+@keyframes arcDraw { from { stroke-dashoffset: var(--c); } to { stroke-dashoffset: var(--off); } }
+.kg-bar, .pnl-bar { transform-origin: left center; animation: barWipe .7s cubic-bezier(.2,.8,.2,1); }
+@keyframes barWipe { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@media (prefers-reduced-motion: reduce) { .kg-fill, .kg-bar, .pnl-bar { animation: none; } }
 /* progress-tracker heatmap */
 .heat-wrap { padding-top: 6px; overflow-x: auto; }
 .heat { display: grid; gap: 3px; width: max-content; }
