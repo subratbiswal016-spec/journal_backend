@@ -198,6 +198,47 @@ class UpstoxDataSource(DataSource):
         self._profile_token = self._token
         return prof
 
+    def get_funds(self) -> Optional[dict]:
+        if not self._token_valid():
+            return None
+        try:
+            body = self._get(API + "/user/get-funds-and-margin", {})
+            eq = (body.get("data") or {}).get("equity") or {}
+            avail = float(eq.get("available_margin") or 0)
+            used = float(eq.get("used_margin") or 0)
+            total = round(avail + used, 2)
+            return {"opening": total, "available": round(avail, 2), "total": total}
+        except Exception:  # noqa: BLE001
+            return None
+
+    # --------------------------------------------------------------- journal
+    def fetch_tradebook(self) -> list[dict]:
+        """Today's executed trades from Upstox."""
+        body = self._get(API + "/order/trades/get-trades-for-day", {})
+        return body.get("data") or []
+
+    def fetch_trade_history(self, from_date: str | None = None,
+                            to_date: str | None = None) -> list[dict]:
+        """Executed trades in [from_date, to_date] from Upstox Historical Trades."""
+        today = _ist_today_str()
+        frm = from_date or f"{_ist_now().year if _ist_now().month >= 4 else _ist_now().year - 1}-04-01"
+        to = to_date or today
+        out: list[dict] = []
+        for page in range(1, 201):
+            body = self._get(API + "/charges/historical-trades", {
+                "start_date": frm,
+                "end_date": to,
+                "page_number": page,
+                "page_size": 100,
+            })
+            rows = body.get("data") or []
+            if not rows:
+                break
+            out.extend(rows)
+            if len(rows) < 100:
+                break
+        return out
+
     # ------------------------------------------------------------------ http
     def _auth_headers(self) -> dict:
         if not self._token_valid():

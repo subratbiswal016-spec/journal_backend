@@ -97,5 +97,8 @@ class DataSource:
     def get_profile(self) -> Optional[dict]:
         return None
 
+    def get_funds(self) -> Optional[dict]:
+        return None
+
     def logout(self) -> None:
         pass

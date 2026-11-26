@@ -32,10 +32,46 @@ def set_creds(client_id: str, access_token: str) -> None:
     })
 
 
+def clear_creds() -> None:
+    store.set_setting("dhan_creds", {})
+
+
 def is_connected() -> bool:
     # Reading trades only needs the access token; client id is optional.
     _, tok = get_creds()
     return bool(tok)
+
+
+def fetch_profile() -> dict:
+    """Validate token and return Dhan user profile (dhanClientId, tokenValidity, etc.)."""
+    _, tok = get_creds()
+    if not tok:
+        raise AuthRequired("Connect your Dhan account first (paste your access token).")
+    try:
+        r = requests.get(f"{BASE}/profile", headers=_headers(tok), timeout=20)
+    except requests.RequestException as e:
+        raise RuntimeError(f"Dhan profile request failed: {e}")
+    if r.status_code in (401, 403):
+        raise AuthRequired("Dhan token invalid or expired. Generate a fresh token at web.dhan.co.")
+    if r.status_code != 200:
+        raise RuntimeError(f"Dhan HTTP {r.status_code}: {r.text[:200]}")
+    body = r.json()
+    return body if isinstance(body, dict) else {}
+
+
+def fetch_funds() -> dict:
+    """Best-effort Dhan fund limit (sodLimit, availabelBalance, utilizedAmount)."""
+    _, tok = get_creds()
+    if not tok:
+        return {}
+    try:
+        r = requests.get(f"{BASE}/fundlimit", headers=_headers(tok), timeout=10)
+        if r.status_code != 200:
+            return {}
+        body = r.json()
+        return body if isinstance(body, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
 
 
 def _headers(tok: str) -> dict:

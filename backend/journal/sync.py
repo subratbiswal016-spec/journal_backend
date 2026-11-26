@@ -45,39 +45,56 @@ def _split_dt(val) -> tuple[str, str]:
     return today, s[-8:] if ":" in s else ""
 
 
+_STORE_KEYS = (
+    "id", "date", "time", "symbol", "side", "qty", "price", "value",
+    "pnl", "closed", "source", "entry_price", "entry_date", "entry_time",
+)
+
+
+def _save_closed(closed: list[dict]) -> None:
+    store.upsert_trades([{k: t.get(k) for k in _STORE_KEYS} for t in closed])
+
+
 def _normalize(t: dict) -> dict | None:
-    sym = t.get("symbol") or t.get("tradingsymbol") or t.get("tradingSymbol")
+    sym = (t.get("symbol") or t.get("tradingsymbol") or t.get("tradingSymbol")
+           or t.get("trading_symbol"))
     if not sym:
         return None
     side_raw = t.get("side", t.get("transactionType", t.get("transaction_type")))
     side = "BUY" if str(side_raw).strip().upper() in ("1", "B", "BUY") else "SELL"
     qty = (t.get("tradedQty") or t.get("traded_qty") or t.get("qty")
-           or t.get("filledQty") or t.get("tradeQty") or 0)
-    price = (t.get("tradePrice") or t.get("trade_price") or t.get("tradedPrice") or t.get("price")
+           or t.get("filledQty") or t.get("tradeQty") or t.get("quantity") or 0)
+    price = (t.get("tradePrice") or t.get("trade_price") or t.get("tradedPrice")
+             or t.get("average_price") or t.get("price")
              or ((t.get("tradeValue") or t.get("trade_value") or 0) / (float(qty) or 1)) or 0)
     dt = (t.get("orderDateTime") or t.get("tradeTime") or t.get("orderTime")
-          or t.get("exchOrdTime") or t.get("tradeDateTime"))
+          or t.get("exchOrdTime") or t.get("tradeDateTime")
+          or t.get("exchange_timestamp") or t.get("order_timestamp") or t.get("trade_date"))
     date, time = _split_dt(dt)
     return {"symbol": sym, "side": side, "qty": float(qty or 0),
             "price": float(price or 0), "date": date, "time": time}
 
 
 def sync_today(source) -> dict:
-    """Fetch today's fills from the active Fyers source and store round-trips."""
-    if getattr(source, "name", "") != "fyers":
+    """Fetch today's fills from the active broker source and store round-trips."""
+    src_name = getattr(source, "name", "")
+    if src_name == "dhan":
+        today = _today()
+        res = sync_dhan(today, today)
+        res["realized_today"] = res.get("realized", 0.0)
+        return res
+    if src_name not in ("fyers", "upstox"):
         return {"ok": False,
-                "error": "Live sync needs the Fyers data source (DATA_SOURCE=fyers)."}
+                "error": "Live sync needs Fyers, Dhan, or Upstox."}
 
     raw = source.fetch_tradebook()
     fills = [f for f in (_normalize(t) for t in raw) if f]
     today = _today()
     today_fills = [f for f in fills if f["date"] == today] or fills
 
-    closed = trades.pair_fifo(today_fills, "fyers")
-    store.clear_source_date("fyers", today)
-    store.upsert_trades([{k: t.get(k) for k in
-        ("id", "date", "time", "symbol", "side", "qty", "price", "value", "pnl", "closed", "source")}
-        for t in closed])
+    closed = trades.pair_fifo(today_fills, src_name)
+    store.clear_source_date(src_name, today)
+    _save_closed(closed)
     store.rebuild_daily_from_trades()
 
     realized = round(sum(float(t["pnl"] or 0) for t in closed), 2)
@@ -87,18 +104,20 @@ def sync_today(source) -> dict:
 
 def sync_fyers_history(source, from_date: str | None = None,
                        to_date: str | None = None) -> dict:
-    """Pull dated executed trades from Fyers (Reports → Trade History) over a
-    date range, pair FIFO into round-trips, and store as the 'fyers' source.
-    Defaults to the current financial year when no range is given."""
-    if getattr(source, "name", "") != "fyers":
-        return {"ok": False,
-                "error": "History sync needs the Fyers data source (DATA_SOURCE=fyers)."}
+    """Pull dated executed trades from the active broker (Fyers / Upstox / Dhan)
+    over a date range, pair FIFO into round-trips, and store under its source."""
+    src_name = getattr(source, "name", "")
     frm = from_date or fy_start()
     to = to_date or _today()
+    if src_name == "dhan":
+        return sync_dhan(frm, to)
+    if src_name not in ("fyers", "upstox"):
+        return {"ok": False,
+                "error": "History sync needs Fyers, Dhan, or Upstox."}
     raw = source.fetch_trade_history(frm, to)
     fills = [f for f in (_normalize(t) for t in raw) if f]
     fills.sort(key=lambda f: (f["date"], f["time"]))
-    closed = trades.pair_fifo(fills, "fyers")
+    closed = trades.pair_fifo(fills, src_name)
 
     if not closed:
         return {"ok": True, "raw_trades": len(raw), "fills": len(fills),
@@ -106,10 +125,8 @@ def sync_fyers_history(source, from_date: str | None = None,
                 "from": frm, "to": to,
                 "note": "No trades returned for this range — your existing data was kept."}
 
-    store.clear_source_range("fyers", frm, to)
-    store.upsert_trades([{k: t.get(k) for k in
-        ("id", "date", "time", "symbol", "side", "qty", "price", "value", "pnl", "closed", "source")}
-        for t in closed])
+    store.clear_source_range(src_name, frm, to)
+    _save_closed(closed)
     store.rebuild_daily_from_trades()
 
     realized = round(sum(float(t["pnl"] or 0) for t in closed), 2)
@@ -156,9 +173,7 @@ def sync_dhan(from_date: str, to_date: str) -> dict:
 
     # Clear only the synced date range so syncing one month doesn't wipe others.
     store.clear_source_range("dhan", from_date, to_date)
-    store.upsert_trades([{k: t.get(k) for k in
-        ("id", "date", "time", "symbol", "side", "qty", "price", "value", "pnl", "closed", "source")}
-        for t in closed])
+    _save_closed(closed)
     store.rebuild_daily_from_trades()
 
     realized = round(sum(float(t["pnl"] or 0) for t in closed), 2)

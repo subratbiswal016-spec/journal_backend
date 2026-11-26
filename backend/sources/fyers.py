@@ -269,6 +269,28 @@ class FyersDataSource(DataSource):
         self._profile_token = self._token
         return prof
 
+    def get_funds(self) -> Optional[dict]:
+        if not self._token_valid():
+            return None
+        try:
+            _rate_limit()
+            resp = self._check(self._model().funds())
+            rows = resp.get("fund_limit") or []
+            total = avail = clear = 0.0
+            for item in rows:
+                title = str(item.get("title") or "").lower()
+                amt = float(item.get("equityAmount") or 0)
+                if "total balance" in title or item.get("id") == 1:
+                    total = amt
+                elif "available balance" in title or item.get("id") == 10:
+                    avail = amt
+                elif "clear balance" in title or item.get("id") == 3:
+                    clear = amt
+            opening = round(clear or total or avail, 2)
+            return {"opening": opening, "available": round(avail or opening, 2), "total": round(total or opening, 2)}
+        except Exception:  # noqa: BLE001
+            return None
+
     # ------------------------------------------------------------------ model
     def _model(self):
         from fyers_apiv3 import fyersModel
@@ -425,6 +447,21 @@ class FyersDataSource(DataSource):
             "symbol": f"NSE:{ticker}-EQ", "resolution": resolution, "date_format": "1",
             "range_from": start.isoformat(), "range_to": end.isoformat(),
             "cont_flag": "1",
+        }))
+        return resp.get("candles") or []
+
+    def fetch_fno_history(self, symbol: str, day: str, resolution: str = "5") -> list[list]:
+        """Candles [ts,o,h,l,c,v] for an F&O contract (including expired) on `day`."""
+        fy = self._model()
+        sym = symbol.strip().upper()
+        if ":" not in sym:
+            exch = "BSE" if sym.startswith(("SENSEX", "BANKEX")) else "NSE"
+            sym = f"{exch}:{sym}"
+        _rate_limit()
+        resp = self._check(fy.fno_historical_data(data={
+            "symbol": sym, "resolution": resolution, "date_format": 1,
+            "range_from": day, "range_to": day,
+            "include_oi": 0, "include_greeks": 0,
         }))
         return resp.get("candles") or []
 

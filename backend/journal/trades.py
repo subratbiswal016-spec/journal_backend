@@ -56,7 +56,9 @@ def pair_fifo(fills: list[dict], source: str) -> list[dict]:
                     "pnl": round(pnl, 2),
                     "closed": 1,
                     "source": source,
-                    "entry_price": round(lot["price"], 4),  # extra (not stored in schema)
+                    "entry_price": round(lot["price"], 4),
+                    "entry_date": lot.get("date"),
+                    "entry_time": lot.get("time"),
                 })
                 lot["qty"] -= m * (1 if lot["qty"] > 0 else -1)
                 if abs(lot["qty"]) < 1e-9:

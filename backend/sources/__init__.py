@@ -1,18 +1,24 @@
-"""Data source layer: swap NSE <-> Upstox behind one interface."""
+"""Data source layer: swap NSE / Fyers / Upstox / Dhan / Mock behind one interface."""
+from typing import Optional
+
 from .. import config
 from .base import DataSource, OptionChain
 from .nse import NSEDataSource
 
 
-def get_source() -> DataSource:
-    """Factory: returns the configured data source instance."""
-    if config.DATA_SOURCE == "upstox":
+def get_source(name: Optional[str] = None) -> DataSource:
+    """Factory: returns the configured (or requested) data source instance."""
+    src = (name or config.DATA_SOURCE).strip().lower()
+    if src == "upstox":
         from .upstox import UpstoxDataSource
         return UpstoxDataSource()
-    if config.DATA_SOURCE == "fyers":
+    if src == "fyers":
         from .fyers import FyersDataSource
         return FyersDataSource()
-    if config.DATA_SOURCE == "mock":
+    if src == "dhan":
+        from .dhan import DhanDataSource
+        return DhanDataSource()
+    if src == "mock":
         from .mock import MockDataSource
         return MockDataSource()
     return NSEDataSource()

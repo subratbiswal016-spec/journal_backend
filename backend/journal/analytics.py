@@ -67,17 +67,24 @@ def set_targets(new: dict) -> dict:
 
 
 # ------------------------------------------------------------------ capital
+def _cap_key() -> str:
+    return f"opening_capital:{store._ACTIVE_SOURCE}" if store._ACTIVE_SOURCE else "opening_capital"
+
+
 def get_capital() -> float:
     """The user's opening (Day 1) trading capital, 0 if not set yet."""
     try:
-        return max(0.0, float(store.get_setting("opening_capital", 0) or 0))
+        val = store.get_setting(_cap_key(), None)
+        if val is None and not store._ACTIVE_SOURCE:
+            val = store.get_setting("opening_capital", 0)
+        return max(0.0, float(val or 0))
     except (TypeError, ValueError):
         return 0.0
 
 
 def set_capital(value) -> float:
     v = max(0.0, float(value or 0))
-    store.set_setting("opening_capital", v)
+    store.set_setting(_cap_key(), v)
     return v
 
 
@@ -186,7 +193,7 @@ def _months_with_data() -> list[str]:
     return sorted(months)
 
 
-def capital_tracker(month: str | None = None) -> dict:
+def capital_tracker(month: str | None = None, opening_override: float | None = None) -> dict:
     """Month-scoped capital growth: opening capital + each day's synced P&L,
     running cumulative capital, and a per-day journal. `month` is 'YYYY-MM'."""
     today = _today()
@@ -196,7 +203,7 @@ def capital_tracker(month: str | None = None) -> dict:
         year, mon = today.year, today.month
     last_day = calendar.monthrange(year, mon)[1]
     m_start, m_end = date(year, mon, 1), date(year, mon, last_day)
-    opening = get_capital()
+    opening = max(0.0, float(opening_override)) if opening_override is not None else get_capital()
 
     rows = {r["date"]: float(r["realized"] or 0)
             for r in store.daily_between(m_start.isoformat(), m_end.isoformat())
@@ -208,12 +215,14 @@ def capital_tracker(month: str | None = None) -> dict:
         d = date(year, mon, i)
         ds = d.isoformat()
         traded = ds in rows
+        day_open = round(opening + cumulative, 2)
         if traded:
             cumulative += rows[ds]
         days.append({
             "date": ds, "n": i, "label": f"D{i}",
             "pnl": round(rows[ds], 2) if traded else None, "traded": traded,
             "weekend": d.weekday() >= 5, "future": d > today,
+            "day_opening": day_open,
             "cumulative": round(cumulative, 2),
             "capital": round(opening + cumulative, 2),
             "note": notes.get(ds, ""),

@@ -18,7 +18,7 @@ _client: MongoClient | None = None
 _db = None
 
 _TRADE_FIELDS = ("id", "date", "time", "symbol", "side", "qty", "price",
-                 "value", "pnl", "closed", "source")
+                 "value", "pnl", "closed", "source", "entry_price", "entry_date", "entry_time")
 
 
 def _database():
@@ -64,22 +64,40 @@ def upsert_trades(rows: list[dict]) -> int:
     return len(rows)
 
 
+_ACTIVE_SOURCE: str | None = None
+
+
+def set_active_source(source: str | None) -> None:
+    global _ACTIVE_SOURCE
+    _ACTIVE_SOURCE = source or None
+
+
+def get_active_source() -> str | None:
+    return _ACTIVE_SOURCE
+
+
 def trades_between(start: str, end: str) -> list[dict]:
-    cur = _coll("trades").find(
-        {"date": {"$gte": start, "$lte": end, "$ne": "unknown"}})
+    q: dict[str, Any] = {"date": {"$gte": start, "$lte": end, "$ne": "unknown"}}
+    if _ACTIVE_SOURCE:
+        q["source"] = _ACTIVE_SOURCE
+    cur = _coll("trades").find(q)
     rows = [_no_id(d) for d in cur]
     rows.sort(key=lambda d: (d.get("date") or "", d.get("time") or ""), reverse=True)
     return rows
 
 
 def trades_on(date: str) -> list[dict]:
-    rows = [_no_id(d) for d in _coll("trades").find({"date": date})]
+    q: dict[str, Any] = {"date": date}
+    if _ACTIVE_SOURCE:
+        q["source"] = _ACTIVE_SOURCE
+    rows = [_no_id(d) for d in _coll("trades").find(q)]
     rows.sort(key=lambda d: (d.get("time") or ""))
     return rows
 
 
 def recent_trades(limit: int = 300) -> list[dict]:
-    docs = [_no_id(d) for d in _coll("trades").find()]
+    q: dict[str, Any] = {"source": _ACTIVE_SOURCE} if _ACTIVE_SOURCE else {}
+    docs = [_no_id(d) for d in _coll("trades").find(q)]
     dated = sorted((d for d in docs if d.get("date") != "unknown"),
                    key=lambda d: (d.get("date") or "", d.get("time") or ""), reverse=True)
     undated = [d for d in docs if d.get("date") == "unknown"]
@@ -98,7 +116,10 @@ def set_daily(date: str, realized: float, trades: int, wins: int, losses: int, s
 def rebuild_daily_from_trades() -> None:
     _coll("daily_pnl").delete_many({})
     agg: dict[str, dict] = {}
-    for t in _coll("trades").find({"closed": 1}):
+    q: dict[str, Any] = {"closed": 1}
+    if _ACTIVE_SOURCE:
+        q["source"] = _ACTIVE_SOURCE
+    for t in _coll("trades").find(q):
         d = t.get("date")
         a = agg.setdefault(d, {"realized": 0.0, "trades": 0, "wins": 0, "losses": 0})
         pnl = float(t.get("pnl") or 0)

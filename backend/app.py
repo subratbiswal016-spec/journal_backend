@@ -115,10 +115,22 @@ async def login_submit(request: Request):
     return RedirectResponse("/login?bad=1", status_code=303)
 
 
-_source = get_source()
+_BROKERS = ("fyers", "dhan", "upstox", "mock", "nse")
+_ISOLATED_BROKERS = ("fyers", "dhan", "upstox")
 _lock = threading.Lock()
 # cache[symbol] = {"at": epoch, "chain": OptionChain, "error": str|None}
 _cache: dict[str, dict] = {}
+
+
+def _apply_source_scope(name: str) -> None:
+    jstore.set_active_source(name if name in _ISOLATED_BROKERS else None)
+    jstore.rebuild_daily_from_trades()
+
+
+_saved_broker = (jstore.get_setting("active_broker") or "").strip().lower()
+_init_name = _saved_broker if _saved_broker in _BROKERS else config.DATA_SOURCE
+_source = get_source(_init_name)
+_apply_source_scope(_source.name)
 
 FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -156,6 +168,30 @@ def _get_chain(symbol: str, expiry: Optional[str] = None, force: bool = False):
         return None, None, str(e)
 
 
+def _switch_source(name: str, logout_prev: bool = True):
+    """Switch the active broker at runtime ('one time connect one only')."""
+    global _source
+    name = (name or "").strip().lower()
+    if name not in _BROKERS:
+        raise HTTPException(status_code=400, detail=f"Unsupported broker: {name}")
+    with _lock:
+        if logout_prev and _source.name != name:
+            try:
+                _source.logout()
+            except Exception:  # noqa: BLE001
+                pass
+        _cache.clear()
+        _source = get_source(name)
+        jstore.set_setting("active_broker", _source.name)
+        _apply_source_scope(_source.name)
+    with _scanner.lock:
+        _scanner.quotes.clear()
+        _scanner.updated.clear()
+        _scanner.auth_required = False
+        _scanner.last_error = None
+    return _source
+
+
 @app.get("/api/config")
 def api_config():
     return {
@@ -164,12 +200,28 @@ def api_config():
         "source": _source.name,
         "needs_login": _source.needs_login(),
         "login_label": getattr(_source, "login_label", "Log in"),
+        "brokers": {
+            "fyers": {"label": "Fyers", "configured": bool(config.FYERS_APP_ID and config.FYERS_SECRET_ID)},
+            "dhan": {"label": "Dhan", "configured": True},
+            "upstox": {"label": "Upstox", "configured": bool(config.UPSTOX_API_KEY and config.UPSTOX_API_SECRET)},
+            "mock": {"label": "Demo", "configured": True},
+        },
     }
 
 
+@app.post("/api/auth/broker")
+async def api_select_broker(request: Request):
+    """Switch the active broker (logs out previous broker if switching)."""
+    d = await request.json()
+    _switch_source(d.get("broker", ""))
+    return api_config()
+
+
 @app.get("/auth/login")
-def auth_login():
-    """Redirect the browser to the active broker's login/consent page."""
+def auth_login(broker: Optional[str] = Query(None)):
+    """Redirect the browser to the active (or requested) broker's login/consent page."""
+    if broker and broker.strip().lower() != _source.name:
+        _switch_source(broker)
     try:
         url = _source.login_url()
     except AuthRequired as e:
@@ -576,14 +628,55 @@ def healthz():
 
 
 # ----------------------------------------------------------------- journal
+_FUNDS_CACHE: dict[tuple[str, str], tuple[float, Optional[dict]]] = {}
+
+
+def _source_auth_sig() -> str:
+    if _source.name == "dhan":
+        return jdhan.get_creds()[1][:16]
+    tok = getattr(_source, "_token", None) or ""
+    return str(tok)[:16]
+
+
+def _cached_broker_funds() -> Optional[dict]:
+    import time as _t
+    key = (_source.name, _source_auth_sig())
+    cached = _FUNDS_CACHE.get(key)
+    if cached and (_t.time() - cached[0]) < 45:
+        return cached[1]
+    try:
+        res = _source.get_funds()
+    except Exception:  # noqa: BLE001
+        res = None
+    _FUNDS_CACHE[key] = (_t.time(), res)
+    return res
+
+
+def _effective_capital() -> tuple[float, str, Optional[dict]]:
+    saved = janalytics.get_capital()
+    funds = _cached_broker_funds()
+    if saved > 0:
+        return saved, "saved", funds
+    if funds:
+        live = float(funds.get("opening") or funds.get("total") or 0)
+        if live >= 1.0:
+            return round(live, 2), "broker", funds
+    return 0.0, "unset", funds
+
+
 @app.get("/api/journal/overview")
 def journal_overview(start: Optional[str] = Query(None), end: Optional[str] = Query(None)):
     today = _today_ist()
+    summary = janalytics.summary(start, end)
+    cap, cap_src, funds = _effective_capital()
+    summary["opening_capital"] = cap
+    summary["capital_source"] = cap_src
+    summary["broker_funds"] = funds
     return {
         "source": _source.name,
-        "can_sync": _source.name == "fyers",
-        "dhan_connected": jdhan.is_connected(),
-        "summary": janalytics.summary(start, end),
+        "can_sync": _source.name in _ISOLATED_BROKERS,
+        "dhan_connected": _source.name == "dhan" and jdhan.is_connected(),
+        "summary": summary,
         "range": {"start": start, "end": end},
         "targets": janalytics.targets_progress(),
         "today": jrules.evaluate(today),
@@ -591,6 +684,18 @@ def journal_overview(start: Optional[str] = Query(None), end: Optional[str] = Qu
         "targets_config": janalytics.get_targets(),
         "recent_trades": _trades_with_tags(300, start, end),
     }
+
+
+@app.get("/api/journal/trades")
+def journal_trades(start: Optional[str] = Query(None), end: Optional[str] = Query(None)):
+    """All trades (with tags) for a specific day or date range."""
+    rows = _trades_with_tags(5000, start, end)
+    closed = [t for t in rows if t.get("closed")]
+    total_pnl = round(sum(float(t.get("pnl") or 0) for t in closed), 2)
+    wins = sum(1 for t in closed if float(t.get("pnl") or 0) > 0)
+    losses = sum(1 for t in closed if float(t.get("pnl") or 0) < 0)
+    return {"start": start, "end": end, "trades": rows,
+            "total_pnl": total_pnl, "wins": wins, "losses": losses}
 
 
 def _trades_with_tags(limit: int, start: Optional[str] = None, end: Optional[str] = None):
@@ -602,7 +707,237 @@ def _trades_with_tags(limit: int, start: Optional[str] = None, end: Optional[str
         rows = jstore.recent_trades(limit)
     for t in rows:
         t["tag"] = tags.get(t["id"])
+        if t.get("entry_price") is None and t.get("pnl") is not None and float(t.get("qty") or 0) > 0:
+            q = float(t["qty"])
+            ex = float(t.get("price") or 0)
+            pl = float(t["pnl"])
+            is_long = str(t.get("side") or "").upper() in ("LONG", "BUY")
+            t["entry_price"] = round(max(0.0, ex - pl / q) if is_long else max(0.0, ex + pl / q), 2)
     return rows
+
+
+_IDX_YAHOO = {
+    "NIFTY": "^NSEI",
+    "BANKNIFTY": "^NSEBANK",
+    "SENSEX": "^BSESN",
+    "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
+    "MIDCPNIFTY": "NIFTY_MIDCAP_100.NS",
+}
+
+
+def _yahoo_intraday(underlying: str, day: str) -> dict | None:
+    """Best-effort 5-min OHLC candles and prior-day classic pivots for `underlying` on `day`."""
+    import requests as _req
+    ysym = _IDX_YAHOO.get(underlying, f"{underlying}.NS")
+    try:
+        dt = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=_IST)
+        if (datetime.now(_IST) - dt).days > 58:
+            return None
+        p1 = int((dt - timedelta(days=5)).timestamp())
+        p2 = int((dt + timedelta(days=1)).timestamp())
+        r = _req.get(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{ysym}",
+            params={"interval": "5m", "period1": p1, "period2": p2},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=7,
+        )
+        if r.status_code != 200:
+            return None
+        res = (((r.json() or {}).get("chart") or {}).get("result") or [None])[0]
+        if not res:
+            return None
+        ts = res.get("timestamp") or []
+        q = ((res.get("indicators") or {}).get("quote") or [{}])[0]
+        opens = q.get("open") or []
+        highs = q.get("high") or []
+        lows = q.get("low") or []
+        closes = q.get("close") or []
+        by_day: dict[str, list[dict]] = {}
+        for t0, o0, h0, l0, c0 in zip(ts, opens, highs, lows, closes):
+            if None in (o0, h0, l0, c0):
+                continue
+            ts_int = int(t0)
+            d_ist = datetime.fromtimestamp(ts_int, _IST)
+            d_str = d_ist.strftime("%Y-%m-%d")
+            by_day.setdefault(d_str, []).append({
+                "ts": ts_int,
+                "t": d_ist.strftime("%H:%M"),
+                "o": round(float(o0), 2),
+                "h": round(float(h0), 2),
+                "l": round(float(l0), 2),
+                "c": round(float(c0), 2),
+            })
+        pts = by_day.get(day) or []
+        if len(pts) < 2:
+            return None
+        pivots = None
+        prev_days = sorted(d for d in by_day if d < day and len(by_day[d]) >= 2)
+        if prev_days:
+            prev_pts = by_day[prev_days[-1]]
+            ph = max(c["h"] for c in prev_pts)
+            pl = min(c["l"] for c in prev_pts)
+            pc = prev_pts[-1]["c"]
+            pp = (ph + pl + pc) / 3.0
+            pivots = {
+                "based_on": prev_days[-1],
+                "p": round(pp, 2),
+                "r1": round(2 * pp - pl, 2),
+                "r2": round(pp + (ph - pl), 2),
+                "r3": round(ph + 2 * (pp - pl), 2),
+                "s1": round(2 * pp - ph, 2),
+                "s2": round(pp - (ph - pl), 2),
+            }
+        return {"symbol": underlying, "points": pts, "pivots": pivots}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+_DHAN_SEC_ID = {"NIFTY": ("13", "NSE_FNO"), "BANKNIFTY": ("25", "NSE_FNO"), "SENSEX": ("51", "BSE_FNO")}
+_DHAN_PLAN_CACHE: dict[str, tuple[float, bool]] = {}
+
+
+def _dhan_has_data_plan() -> bool:
+    import time as _t
+    tok, _ = jdhan.get_creds()
+    if not tok:
+        return False
+    key = tok[:16]
+    cached = _DHAN_PLAN_CACHE.get(key)
+    if cached and (_t.time() - cached[0]) < 180:
+        return cached[1]
+    try:
+        prof = jdhan.fetch_profile() or {}
+        ok = str(prof.get("dataPlan") or "").lower() == "active"
+    except Exception:  # noqa: BLE001
+        ok = False
+    _DHAN_PLAN_CACHE[key] = (_t.time(), ok)
+    return ok
+
+
+def _dhan_option_ohlc(sym: str, day: str) -> list[dict]:
+    """Best-effort Dhan rollingoption 5m OHLC (only when Dhan Data API plan is active)."""
+    import re as _re, requests as _req
+    und = janalytics._underlying(sym)
+    if und not in _DHAN_SEC_ID or not _dhan_has_data_plan():
+        return []
+    m = _re.search(r"\b(\d+(?:\.\d+)?)\s+(CALL|PUT|CE|PE)\b", sym)
+    if not m:
+        return []
+    opt_type = "CALL" if m.group(2) in ("CALL", "CE") else "PUT"
+    sec_id, ex_seg = _DHAN_SEC_ID[und]
+    tok, _ = jdhan.get_creds()
+    try:
+        next_day = (datetime.strptime(day, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+        r = _req.post(
+            "https://api.dhan.co/v2/charts/rollingoption",
+            headers={"access-token": tok, "Content-Type": "application/json"},
+            json={
+                "exchangeSegment": ex_seg, "interval": "5", "securityId": int(sec_id),
+                "instrument": "OPTIDX", "expiryFlag": "WEEK", "expiryCode": 1,
+                "strike": "ATM", "drvOptionType": opt_type,
+                "requiredData": ["open", "high", "low", "close", "timestamp"],
+                "fromDate": day, "toDate": next_day,
+            },
+            timeout=6,
+        )
+        if r.status_code != 200:
+            return []
+        side_data = ((r.json() or {}).get("data") or {}).get("ce" if opt_type == "CALL" else "pe") or {}
+        ts = side_data.get("timestamp") or []
+        os_, hs, ls, cs = (side_data.get(k) or [] for k in ("open", "high", "low", "close"))
+        out = []
+        for t0, o0, h0, l0, c0 in zip(ts, os_, hs, ls, cs):
+            if None in (o0, h0, l0, c0):
+                continue
+            ts_int = int(t0)
+            d_ist = datetime.fromtimestamp(ts_int, _IST)
+            if d_ist.strftime("%Y-%m-%d") == day:
+                out.append({
+                    "ts": ts_int, "t": d_ist.strftime("%H:%M"),
+                    "o": round(float(o0), 2), "h": round(float(h0), 2),
+                    "l": round(float(l0), 2), "c": round(float(c0), 2),
+                })
+        return out
+    except Exception:  # noqa: BLE001
+        return []
+
+
+@app.get("/api/journal/trade-chart")
+def journal_trade_chart(
+    symbol: str = Query(...),
+    date: str = Query(""),
+    entry_price: Optional[float] = Query(None),
+    exit_price: Optional[float] = Query(None),
+    entry_time: str = Query(""),
+    exit_time: str = Query(""),
+):
+    """Best-effort intraday OHLC candles + underlying context & pivots for a trade popup."""
+    sym = (symbol or "").strip().upper()
+    candles: list[dict] = []
+    note: Optional[str] = None
+
+    if _source.name == "fyers" and sym and date and date != "unknown":
+        try:
+            is_fno = (" " in sym) or sym.endswith(("CE", "PE", "FUT")) or sym.endswith(("CALL", "PUT"))
+            if is_fno and " " not in sym and hasattr(_source, "fetch_fno_history"):
+                raw = _source.fetch_fno_history(sym, date, resolution="5")
+            elif " " not in sym:
+                dt = datetime.strptime(date, "%Y-%m-%d").date()
+                days_back = max(2, (datetime.now(_IST).date() - dt).days + 1)
+                raw = _source.fetch_history(sym, resolution="5", days=days_back) if days_back <= 90 else []
+            else:
+                raw = []
+            for c in raw:
+                if len(c) >= 5:
+                    ts_int = int(c[0])
+                    d_ist = datetime.fromtimestamp(ts_int, _IST)
+                    if d_ist.strftime("%Y-%m-%d") == date:
+                        candles.append({
+                            "ts": ts_int, "t": d_ist.strftime("%H:%M"),
+                            "o": round(float(c[1]), 2), "h": round(float(c[2]), 2),
+                            "l": round(float(c[3]), 2), "c": round(float(c[4]), 2),
+                        })
+        except Exception:  # noqa: BLE001
+            candles = []
+    elif _source.name == "dhan" and sym and date and date != "unknown":
+        candles = _dhan_option_ohlc(sym, date)
+    elif _source.name == "mock" and entry_price is not None and exit_price is not None:
+        import random
+        rng = random.Random(sum(ord(c) for c in sym + date))
+        ep, xp = float(entry_price), float(exit_price)
+        base_dt = datetime.strptime(date if date and date != "unknown" else datetime.now(_IST).strftime("%Y-%m-%d"), "%Y-%m-%d").replace(tzinfo=_IST)
+        steps = 36
+        prev_c = ep
+        for i in range(steps):
+            frac = (i + 1) / steps
+            target = ep + (xp - ep) * frac
+            wobble = 0.0 if i in (0, steps - 1) else target * rng.uniform(-0.025, 0.025)
+            o_val = round(max(0.05, prev_c), 2)
+            c_val = round(max(0.05, xp if i == steps - 1 else target + wobble), 2)
+            wick = max(0.2, abs(c_val - o_val) * rng.uniform(0.3, 1.1) + max(o_val, c_val) * 0.008)
+            h_val = round(max(o_val, c_val) + wick * rng.uniform(0.3, 1.0), 2)
+            l_val = round(max(0.05, min(o_val, c_val) - wick * rng.uniform(0.3, 1.0)), 2)
+            bar_dt = base_dt + timedelta(hours=9, minutes=15 + i * 5)
+            candles.append({
+                "ts": int(bar_dt.timestamp()), "t": bar_dt.strftime("%H:%M"),
+                "o": o_val, "h": h_val, "l": l_val, "c": c_val,
+            })
+            prev_c = c_val
+
+    underlying = None
+    if date and date != "unknown":
+        und = janalytics._underlying(sym)
+        if und and und != "OTHER" and (" " in sym or sym.endswith(("CE", "PE", "FUT")) or not candles):
+            underlying = _yahoo_intraday(und, date)
+    if not candles:
+        note = (
+            "Expired option OHLC isn't available without a paid Data API — "
+            "showing underlying 5m OHLC candles with Entry/Exit timing & Pivot levels."
+            if underlying else
+            "Option OHLC candles aren't archived after expiry — showing Entry → Exit trajectory."
+        )
+
+    return {"symbol": sym, "date": date, "candles": candles, "underlying": underlying, "note": note}
 
 
 @app.get("/api/journal/export.csv")
@@ -723,8 +1058,24 @@ def dhan_status():
 @app.post("/api/journal/dhan/connect")
 async def dhan_connect(request: Request):
     d = await request.json()
-    jdhan.set_creds(d.get("client_id", ""), d.get("access_token", ""))
-    return {"connected": jdhan.is_connected()}
+    tok = (d.get("access_token") or "").strip()
+    cid = (d.get("client_id") or "").strip()
+    if not tok:
+        raise HTTPException(status_code=400, detail="Dhan access token is required.")
+    jdhan.set_creds(cid, tok)
+    try:
+        prof = jdhan.fetch_profile()
+    except AuthRequired as e:
+        jdhan.clear_creds()
+        raise HTTPException(status_code=401, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        jdhan.clear_creds()
+        raise HTTPException(status_code=502, detail=f"Dhan verification failed: {e}")
+    if not cid and prof.get("dhanClientId"):
+        jdhan.set_creds(str(prof["dhanClientId"]), tok)
+    # Switch active broker to Dhan (logs out any previous Fyers/Upstox session).
+    _switch_source("dhan")
+    return {"connected": True, "source": "dhan", "client_id": prof.get("dhanClientId") or cid}
 
 
 @app.post("/api/journal/clear")
@@ -793,9 +1144,13 @@ async def journal_set_targets(request: Request):
 
 @app.get("/api/journal/capital-tracker")
 def journal_capital_tracker(month: Optional[str] = Query(None)):
-    data = janalytics.capital_tracker(month)
-    data["can_sync"] = _source.name == "fyers"      # Fyers = today-only sync
-    data["dhan_connected"] = jdhan.is_connected()
+    cap, cap_src, funds = _effective_capital()
+    data = janalytics.capital_tracker(month, opening_override=cap if cap_src == "broker" else None)
+    data["capital_source"] = cap_src
+    data["broker_funds"] = funds
+    data["source"] = _source.name
+    data["can_sync"] = _source.name in _ISOLATED_BROKERS
+    data["dhan_connected"] = _source.name == "dhan" and jdhan.is_connected()
     return data
 
 
@@ -803,6 +1158,7 @@ def journal_capital_tracker(month: Optional[str] = Query(None)):
 async def journal_set_capital(request: Request):
     data = await request.json()
     janalytics.set_capital(data.get("opening"))
+    _FUNDS_CACHE.pop((_source.name, _source_auth_sig()), None)
     if "brokerage" in data or "charges" in data:
         month = (data.get("month") or _today_ist()[:7])
         janalytics.set_month_costs(month, data.get("brokerage"), data.get("charges"))

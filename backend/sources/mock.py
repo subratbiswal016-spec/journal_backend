@@ -33,6 +33,9 @@ class MockDataSource(DataSource):
     def get_profile(self) -> dict:
         return {"name": "Demo Trader", "user_id": "DEMO-01", "email": "", "avatar": "", "broker": "Demo"}
 
+    def get_funds(self) -> dict:
+        return {"opening": 100000.0, "available": 100000.0, "total": 100000.0}
+
     def get_option_chain(self, symbol: str, expiry: Optional[str] = None) -> OptionChain:
         symbol = symbol.upper()
         step = _STEP.get(symbol, 50)

@@ -56,7 +56,7 @@
   // sidebar: ☰ opens (mobile) or re-opens a collapsed sidebar (desktop);
   // « collapses it. A resize nudge lets the charts refit to the new width.
   const sbIsMobile = () => window.matchMedia("(max-width: 860px)").matches;
-  const sbNudge = () => setTimeout(() => { try { window.dispatchEvent(new Event("resize")); } catch (e) {} }, 240);
+  const sbNudge = () => setTimeout(() => { try { window.dispatchEvent(new Event("resize")); } catch (e) { } }, 240);
   if ($("sbToggle")) $("sbToggle").addEventListener("click", () => {
     if (sbIsMobile()) document.body.classList.toggle("sb-open");
     else { document.body.classList.remove("sb-collapsed"); sbNudge(); }
@@ -203,10 +203,10 @@
     }
     html += `<div class="ipo-sect">🟢 Open now <span class="ipo-count">${open.length}</span></div>`;
     html += open.length ? `<div class="ipo-grid">${open.map((x, i) => ipoCard(x, i)).join("")}</div>`
-                        : `<p class="modal-sub">No IPOs open for subscription right now.</p>`;
+      : `<p class="modal-sub">No IPOs open for subscription right now.</p>`;
     html += `<div class="ipo-sect">🔜 Upcoming <span class="ipo-count">${up.length}</span></div>`;
     html += up.length ? `<div class="ipo-grid">${up.map((x, i) => ipoCard(x, open.length + i)).join("")}</div>`
-                      : `<p class="modal-sub">No upcoming IPOs announced yet.</p>`;
+      : `<p class="modal-sub">No upcoming IPOs announced yet.</p>`;
     if (d.url) html += `<a class="ana-report" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">📋 Full IPO details on NSE ↗</a>`;
     $("ipoBody").innerHTML = html;
     setIpoBadge(d);
@@ -227,7 +227,7 @@
   }
 
   // ---------------------------------------------------- Dashboard (home)
-  let homePeriod = "all";
+  let homePeriod = "this_month";
   let homeData = null;          // last overview payload
   let calMonth = null;          // {y, m} shown in the calendar
   let homeBound = false;
@@ -244,7 +244,8 @@
   }
   let homeCustStart = "", homeCustEnd = "";
   function homeRange(p) {
-    const iso = (d) => d.toISOString().slice(0, 10), t = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const iso = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, t = new Date();
     if (p === "custom") return { start: homeCustStart || "", end: homeCustEnd || "" };
     if (p === "this_month") return { start: iso(new Date(t.getFullYear(), t.getMonth(), 1)), end: iso(t) };
     if (p === "3m") { const s = new Date(t); s.setDate(s.getDate() - 90); return { start: iso(s), end: iso(t) }; }
@@ -318,6 +319,25 @@
     if ($("calPrev")) $("calPrev").addEventListener("click", () => shiftCal(-1));
     if ($("calNext")) $("calNext").addEventListener("click", () => shiftCal(1));
     if ($("homeSyncBtn")) $("homeSyncBtn").addEventListener("click", homeSync);
+    if ($("homeCapBtn")) $("homeCapBtn").addEventListener("click", () => {
+      const pop = $("homeCapEdit"); if (!pop) return;
+      pop.classList.toggle("hidden");
+      if (!pop.classList.contains("hidden") && $("homeCapIn")) {
+        $("homeCapIn").value = (homeData?.summary?.opening_capital || 0) || "";
+        $("homeCapIn").focus();
+      }
+    });
+    const saveHomeCap = async () => {
+      const v = Math.max(0, Number($("homeCapIn")?.value) || 0);
+      try {
+        await fetch("/api/journal/capital", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ opening: v }) });
+        if ($("homeCapEdit")) $("homeCapEdit").classList.add("hidden");
+        if ($("openingCapital")) $("openingCapital").value = v || "";
+        await loadHome();
+      } catch (e) { homeMsg("Could not save capital: " + e.message, true); }
+    };
+    if ($("homeCapSave")) $("homeCapSave").addEventListener("click", saveHomeCap);
+    if ($("homeCapIn")) $("homeCapIn").addEventListener("keydown", (e) => { if (e.key === "Enter") saveHomeCap(); });
   }
   function homeMsg(t, err) {
     const m = $("homeSyncMsg"); if (!m) return;
@@ -337,12 +357,13 @@
       }
       const resp = await fetch(`/api/journal/sync-history?start=${r.start}&end=${r.end}`, { method: "POST" });
       const d = await resp.json().catch(() => ({}));
+      const srcName = (homeData && homeData.source) ? homeData.source.replace(/^\w/, (c) => c.toUpperCase()) : "broker";
       if (!resp.ok) {
-        if (resp.status === 401) { homeMsg("Log in to Fyers (open Market, then log in) before syncing.", true); return; }
+        if (resp.status === 401) { homeMsg(`Log in to ${srcName} before syncing.`, true); return; }
         throw new Error(d.detail || d.error || "Sync failed");
       }
       if (!d.round_trips) { homeMsg(d.note || "No trades found in this range.", true); }
-      else homeMsg(`✅ Synced ${d.round_trips} trades from Fyers` +
+      else homeMsg(`✅ Synced ${d.round_trips} trades from ${srcName}` +
         (d.date_range ? ` (${d.date_range[0]} → ${d.date_range[1]})` : "") + ` · P&L ${signed(d.realized || 0)}`);
       loadHome();
     } catch (e) { homeMsg("Sync failed: " + e.message, true); }
@@ -405,16 +426,36 @@
         pItem("Gross P&L", signed(s.total_realized || 0), (s.total_realized || 0) >= 0 ? "pos" : "neg") +
         pItem("Brokerage", neg(s.total_brokerage), "neg", "excl. taxes") +
         pItem("Total charges", neg(s.total_costs), "neg", s.costs_estimated ? "STT·GST·stamp (est.)" : "STT·GST·stamp") +
-        `<div class="pnl-i"><div class="pnl-k">Profitable days</div><div class="pnl-bar"><span class="pb-g" style="width:${profPct}%"></span><span class="pb-r" style="width:${100 - profPct}%"></span></div><div class="pnl-sub">${profPct}% win · ${100 - profPct}% loss (${pdays}/${ldays})</div></div>`
+        `<div class="pnl-i pnl-days"><div class="pnl-krow"><span class="pnl-k">Profitable days</span><span class="pnl-badge ${profPct >= 50 ? "pos" : "neg"}">${profPct}% win</span></div>` +
+        `<div class="pnl-bar">${profPct > 0 ? `<span class="pb-g" style="width:${profPct}%"></span>` : ""}${profPct < 100 ? `<span class="pb-r" style="width:${100 - profPct}%"></span>` : ""}</div>` +
+        `<div class="pnl-sub">${pdays} win · ${ldays} loss days (${100 - profPct}% loss)</div></div>`
       ) : "";
     }
 
-    let cum = 0, peak = 0; const labels = [], equity = [], dd = [];
-    daily.forEach((x) => { cum += (+x.realized || 0); labels.push(x.date); equity.push(round2(cum)); peak = Math.max(peak, cum); dd.push(round2(cum - peak)); });
-    drawHomeLine("homeEquity", labels, equity, "equity");
-    drawHomeLine("homeDrawdown", labels, dd, "dd");
-    drawBalance(labels, equity, s.opening_capital || 0);
-    drawHomeBars("homeDaily", daily);
+    let cum = 0, peak = 0; const labels = [], equity = [], eqOpen = [], dd = [];
+    const opening = +s.opening_capital || 0;
+    if ($("homeCapVal")) $("homeCapVal").textContent = opening > 0 ? moneyShort(opening) : "₹0";
+    if ($("homeCapBtn")) {
+      const bf = s.broker_funds && (s.broker_funds.total || s.broker_funds.opening);
+      $("homeCapBtn").title = s.capital_source === "broker"
+        ? `Auto-loaded from ${(d.source || "broker").toUpperCase()} funds (${inr(opening)}) — click to override`
+        : opening > 0
+          ? `Day-1 opening capital (${inr(opening)}) — rolls forward daily with P&L`
+          : `Click to set Day-1 opening capital${bf != null ? ` (broker balance: ${inr(bf)})` : ""}`;
+    }
+    daily.forEach((x) => {
+      eqOpen.push(round2(cum));
+      cum += (+x.realized || 0);
+      labels.push(x.date);
+      equity.push(round2(cum));
+      peak = Math.max(peak, cum);
+      dd.push(round2(cum - peak));
+    });
+    const dayOpen = eqOpen.map((v) => round2(opening + v));
+    drawHomeLine("homeEquity", labels, equity, dayOpen, "equity");
+    drawHomeLine("homeDrawdown", labels, dd, dayOpen, "dd");
+    drawBalance(labels, equity, dayOpen, opening);
+    drawHomeBars("homeDaily", daily, dayOpen);
     drawWinLoss("homeWinLoss", pdays, ldays);
 
     if (!calMonth) {
@@ -424,27 +465,33 @@
     renderCal(daily);
     renderHomeTrades(d.recent_trades || []);
     drawRadar(s, daily, pf, dayWin);
-    drawScatter(d.recent_trades || []);
+    drawScatter(d.recent_trades || [], opening);
     drawHeatmap(daily);
-    if ($("homeSyncBtn")) $("homeSyncBtn").style.display = d.can_sync ? "" : "none";
+    if ($("homeSyncBtn")) {
+      const bLabel = { fyers: "Fyers", dhan: "Dhan", upstox: "Upstox" }[d.source];
+      $("homeSyncBtn").style.display = d.can_sync && bLabel ? "" : "none";
+      if (bLabel) $("homeSyncBtn").textContent = "⬇ Sync from " + bLabel;
+    }
   }
   // KPI mini-gauges
   function gArc(pct, color) {
     pct = Math.max(0, Math.min(100, pct || 0));
-    const C = Math.PI * 26, off = (C - C * pct / 100).toFixed(1), cs = C.toFixed(1);
-    return `<svg viewBox="0 0 60 36" class="kg-arc"><path d="M4,30 A26,26 0 0 1 56,30" fill="none" stroke="var(--line)" stroke-width="6" stroke-linecap="round"/>` +
-      `<path class="kg-fill" d="M4,30 A26,26 0 0 1 56,30" fill="none" stroke="${color}" stroke-width="6" stroke-linecap="round" stroke-dasharray="${cs}" stroke-dashoffset="${off}" style="--off:${off};--c:${cs}"/>` +
-      `<text x="30" y="29" text-anchor="middle" class="kg-t">${Math.round(pct)}</text></svg>`;
+    const C = Math.PI * 25, off = (C - C * pct / 100).toFixed(1), cs = C.toFixed(1);
+    return `<svg viewBox="0 0 64 40" class="kg-arc" style="--gcol:${color}">` +
+      `<path d="M7,33 A25,25 0 0 1 57,33" fill="none" stroke="var(--line)" stroke-width="5.5" stroke-linecap="round" opacity=".55"/>` +
+      `<path d="M12,33 A20,20 0 0 1 52,33" fill="none" stroke="var(--line)" stroke-width="1" stroke-dasharray="1.5 3.5" opacity=".45"/>` +
+      `<path class="kg-fill" d="M7,33 A25,25 0 0 1 57,33" fill="none" stroke="${color}" stroke-width="5.5" stroke-linecap="round" stroke-dasharray="${cs}" stroke-dashoffset="${off}" style="--off:${off};--c:${cs}"/>` +
+      `<text x="32" y="31" text-anchor="middle" class="kg-t">${Math.round(pct)}<tspan class="kg-u">%</tspan></text></svg>`;
   }
   function gDonut(green, red) {
-    const tot = green + red, gp = tot ? green / tot : 0, C = 2 * Math.PI * 13;
+    const tot = green + red, gp = tot ? green / tot : 0, C = 2 * Math.PI * 13.5;
     const off = (C * (1 - gp)).toFixed(1), cs = C.toFixed(1);
-    return `<svg viewBox="0 0 34 34" class="kg-d"><circle cx="17" cy="17" r="13" fill="none" stroke="var(--call)" stroke-width="5"/>` +
-      `<circle class="kg-fill" cx="17" cy="17" r="13" fill="none" stroke="var(--put)" stroke-width="5" stroke-dasharray="${cs}" stroke-dashoffset="${off}" transform="rotate(-90 17 17)" style="--off:${off};--c:${cs}"/></svg>`;
+    return `<svg viewBox="0 0 38 38" class="kg-d"><circle cx="19" cy="19" r="13.5" fill="none" stroke="var(--call)" stroke-width="5" opacity=".85"/>` +
+      `<circle class="kg-fill" cx="19" cy="19" r="13.5" fill="none" stroke="var(--put)" stroke-width="5" stroke-linecap="round" stroke-dasharray="${cs}" stroke-dashoffset="${off}" transform="rotate(-90 19 19)" style="--off:${off};--c:${cs}"/></svg>`;
   }
   function gBar(green, red) {
     const tot = green + red, gp = tot ? Math.round(green / tot * 100) : 50;
-    return `<div class="kg-bar"><span class="kb-g" style="width:${gp}%"></span><span class="kb-r" style="width:${100 - gp}%"></span></div>`;
+    return `<div class="kg-bar">${gp > 0 ? `<span class="kb-g" style="width:${gp}%"></span>` : ""}${gp < 100 ? `<span class="kb-r" style="width:${100 - gp}%"></span>` : ""}</div>`;
   }
   function drawHeatmap(daily) {
     const el = $("homeHeat"); if (!el) return;
@@ -474,22 +521,72 @@
       months += (mo !== lastM) ? `<div class="hmon">${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][mo]}</div>` : `<div class="hmon"></div>`;
       lastM = mo;
     }
-    let html = `<div class="heat" style="grid-template-columns:auto repeat(${weeks.length},14px)">` + months;
+    const tipDate = (ds) => {
+      const dt = new Date(ds + "T00:00:00");
+      return isNaN(dt) ? ds : `${dows[dt.getDay()]}, ${dt.getDate()} ${MON[dt.getMonth()]} ${dt.getFullYear()}`;
+    };
+    const cellPx = weeks.length <= 10 ? 18 : 14;
+    let html = `<div class="heat-scroll"><div class="heat" style="--hc:${cellPx}px;grid-template-columns:auto repeat(${weeks.length},${cellPx}px)">` + months;
     for (let r = 0; r < 7; r++) {
       html += `<div class="hlbl">${dows[r]}</div>`;              // weekday label
       for (let w = 0; w < weeks.length; w++) {
         const c = weeks[w][r];
-        if (c.v == null) { html += `<div class="hc" title="${c.ds}"></div>`; continue; }
+        const td = tipDate(c.ds);
+        if (c.v == null) {
+          html += `<div class="hc" data-tip-title="${td}" data-tip-val="No trades" data-tip-cls="flat"></div>`;
+          continue;
+        }
         // intensity scales with |P&L|: bigger profit/loss → stronger colour
         const op = (0.2 + Math.min(1, Math.abs(c.v) / maxAbs) * 0.8).toFixed(2);
-        html += `<div class="hc ${c.v >= 0 ? "g" : "r"}" style="opacity:${op}" title="${c.ds}: ₹${fmt(c.v, 0)}"></div>`;
+        const cls = c.v >= 0 ? "pos" : "neg";
+        html += `<div class="hc ${c.v >= 0 ? "g" : "r"}" style="opacity:${op}" data-tip-title="${td}" data-tip-val="${signed(c.v)}" data-tip-cls="${cls}" data-range-start="${c.ds}" data-range-end="${c.ds}" data-range-title="${td}"></div>`;
       }
     }
-    html += `</div><div class="heat-leg"><span>More loss</span>` +
+    html += `</div></div><div class="heat-leg"><span>More loss</span>` +
       `<i class="r" style="opacity:1"></i><i class="r" style="opacity:.5"></i><i></i>` +
       `<i class="g" style="opacity:.5"></i><i class="g" style="opacity:1"></i><span>More profit</span></div>`;
     el.innerHTML = html;
+    const sc = el.querySelector(".heat-scroll");
+    if (sc) {
+      sc.scrollLeft = sc.scrollWidth;
+      sc.addEventListener("scroll", hideTip, { passive: true });
+    }
   }
+  // Floating animated tooltip for heatmap & calendar cells
+  let _tipEl = null;
+  function hideTip() { if (_tipEl) _tipEl.classList.remove("show"); }
+  function showTip(target) {
+    if (!target) return;
+    if (!_tipEl) {
+      _tipEl = document.createElement("div");
+      _tipEl.className = "ui-tip";
+      _tipEl.setAttribute("role", "tooltip");
+      document.body.appendChild(_tipEl);
+    }
+    const title = target.dataset.tipTitle || "";
+    const val = target.dataset.tipVal || "";
+    const cls = target.dataset.tipCls || "flat";
+    const sub = target.dataset.tipSub || "";
+    _tipEl.innerHTML =
+      `<div class="ut-date">${esc(title)}</div>` +
+      `<div class="ut-val ${esc(cls)}">${esc(val)}</div>` +
+      (sub ? `<div class="ut-sub">${esc(sub)}</div>` : "");
+    const r = target.getBoundingClientRect();
+    const cx = Math.max(84, Math.min(window.innerWidth - 84, r.left + r.width / 2));
+    const flip = r.top < 72;
+    _tipEl.classList.toggle("flip", flip);
+    _tipEl.style.left = cx + "px";
+    _tipEl.style.top = (flip ? r.bottom : r.top) + "px";
+    _tipEl.classList.add("show");
+  }
+  document.addEventListener("mouseover", (e) => {
+    const t = e.target.closest("[data-tip-title]");
+    if (t) showTip(t); else hideTip();
+  });
+  document.addEventListener("mouseout", (e) => {
+    if (!e.relatedTarget || !e.relatedTarget.closest || !e.relatedTarget.closest("[data-tip-title]")) hideTip();
+  });
+  window.addEventListener("scroll", hideTip, { passive: true });
   const _clamp = (v) => Math.max(0, Math.min(100, v));
   function drawRadar(s, daily, pf, dayWin) {
     const el = $("homeRadar"); if (!el || typeof Chart === "undefined") return;
@@ -516,13 +613,50 @@
       overall >= 70 ? "Strong" : overall >= 50 ? "Solid" : overall >= 30 ? "Developing" : "Needs work";
     const c = homeColors();
     if (homeCharts.homeRadar) homeCharts.homeRadar.destroy();
-    homeCharts.homeRadar = new Chart(el, { type: "radar",
-      data: { labels: ["Win %", "Profit factor", "Avg win/loss", "Day win %", "Drawdown ctrl", "Recovery"],
-        datasets: [{ data: axes, borderColor: c.put, backgroundColor: c.put + "33", borderWidth: 2, pointRadius: 2, pointBackgroundColor: c.put }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (x) => x.label + ": " + Math.round(x.parsed.r) } } },
-        scales: { r: { min: 0, max: 100, grid: { color: c.grid }, angleLines: { color: c.grid }, pointLabels: { color: c.tick, font: { size: 10 } }, ticks: { display: false, stepSize: 25 } } } } });
+    homeCharts.homeRadar = new Chart(el, {
+      type: "radar",
+      data: {
+        labels: ["Win %", "Profit factor", "Avg win/loss", "Day win %", "Drawdown ctrl", "Recovery"],
+        datasets: [{ data: axes, borderColor: c.put, backgroundColor: c.put + "33", borderWidth: 2, pointRadius: 2, pointBackgroundColor: c.put }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (x) => x.label + ": " + Math.round(x.parsed.r) } } },
+        scales: { r: { min: 0, max: 100, grid: { color: c.grid }, angleLines: { color: c.grid }, pointLabels: { color: c.tick, font: { size: 10 } }, ticks: { display: false, stepSize: 25 } } }
+      }
+    });
   }
-  function drawScatter(trades) {
+  function _capRefDs(label, data, yAxisID) {
+    const ds = {
+      type: "line", label, data, borderColor: "#f0b429", borderWidth: 1.5,
+      borderDash: [5, 4], pointRadius: 0, pointHoverRadius: 3, fill: false,
+      tension: .35, cubicInterpolationMode: "monotone", order: 0, hidden: true,
+    };
+    if (yAxisID) ds.yAxisID = yAxisID;
+    return ds;
+  }
+  function _y1Scale() {
+    return {
+      position: "right",
+      display: false,
+      grid: { display: false },
+      ticks: { color: "#f0b429", maxTicksLimit: 5, font: { size: 9.5 }, callback: (v) => moneyShort(v) },
+    };
+  }
+  function _capLegend(color, size) {
+    return {
+      display: true,
+      labels: { color, boxWidth: 12, font: { size: size || 10 } },
+      onClick(e, item, legend) {
+        Chart.defaults.plugins.legend.onClick.call(this, e, item, legend);
+        const ch = legend.chart;
+        if (ch.options.scales && ch.options.scales.y1) {
+          ch.options.scales.y1.display = ch.isDatasetVisible(1);
+          ch.update();
+        }
+      },
+    };
+  }
+  function drawScatter(trades, opening) {
     const el = $("homeScatter"); if (!el || typeof Chart === "undefined") return;
     const c = homeColors(), pts = [], cols = [];
     (trades || []).forEach((t) => {
@@ -534,61 +668,128 @@
       pts.push({ x: Math.round(h * 100) / 100, y: +t.pnl }); cols.push((+t.pnl) >= 0 ? c.put : c.call);
     });
     if (homeCharts.homeScatter) homeCharts.homeScatter.destroy();
-    homeCharts.homeScatter = new Chart(el, { type: "scatter",
-      data: { datasets: [{ data: pts, pointBackgroundColor: cols, pointBorderColor: cols, pointRadius: 3, pointHoverRadius: 5 }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false },
-          tooltip: { callbacks: { label: (x) => { const hh = Math.floor(x.parsed.x), mm = Math.round((x.parsed.x - hh) * 60); return `${hh}:${String(mm).padStart(2, "0")} · ₹${fmt(x.parsed.y, 0)}`; } } } },
-        scales: { x: { min: 9, max: 15.75, grid: { color: c.grid }, ticks: { color: c.tick, stepSize: 1, font: { size: 10 }, callback: (v) => v + ":00" } },
-          y: { grid: { color: c.grid }, ticks: { color: c.tick, font: { size: 10 }, callback: (v) => moneyShort(v) } } } } });
+    const op = +opening || 0;
+    const capDs = _capRefDs(op > 0 ? `Opening capital (${moneyShort(op)} · ₹0)` : "Opening capital (₹0)", [{ x: 9, y: 0 }, { x: 15.75, y: 0 }]);
+    homeCharts.homeScatter = new Chart(el, {
+      type: "scatter",
+      data: { datasets: [{ label: "Trade P&L", data: pts, pointBackgroundColor: cols, pointBorderColor: cols, pointRadius: 3, pointHoverRadius: 5 }, capDs] },
+      options: {
+        responsive: true, maintainAspectRatio: false, plugins: {
+          legend: { display: true, labels: { color: c.tick, boxWidth: 12, font: { size: 10 } } },
+          tooltip: {
+            filter: (x) => x.datasetIndex === 0,
+            callbacks: { label: (x) => { const hh = Math.floor(x.parsed.x), mm = Math.round((x.parsed.x - hh) * 60); return `${hh}:${String(mm).padStart(2, "0")} · ₹${fmt(x.parsed.y, 0)}`; } }
+          }
+        },
+        scales: {
+          x: { min: 9, max: 15.75, grid: { color: c.grid }, ticks: { color: c.tick, stepSize: 1, font: { size: 10 }, callback: (v) => v + ":00" } },
+          y: { grid: { color: c.grid }, ticks: { color: c.tick, font: { size: 10 }, callback: (v) => moneyShort(v) } }
+        }
+      }
+    });
   }
   function homeColors() {
     const css = getComputedStyle(document.body);
     const g = (n, f) => (css.getPropertyValue(n) || f).trim();
-    return { grid: g("--line", "rgba(127,127,127,.15)"), tick: g("--muted", "#9aa4b2"),
-      put: g("--put", "#26a69a"), call: g("--call", "#ef5350") };
+    return {
+      grid: g("--line", "rgba(127,127,127,.15)"), tick: g("--muted", "#9aa4b2"),
+      put: g("--put", "#26a69a"), call: g("--call", "#ef5350")
+    };
   }
-  function drawHomeLine(id, labels, data, kind) {
+  function drawHomeLine(id, labels, data, dayOpen, kind) {
     const el = $(id); if (!el || typeof Chart === "undefined") return;
     if (homeCharts[id]) homeCharts[id].destroy();
-    const c = homeColors(), color = kind === "dd" ? c.call : c.put;
-    homeCharts[id] = new Chart(el, { type: "line",
-      data: { labels, datasets: [{ data, borderColor: color, backgroundColor: color + "22", borderWidth: 2.5, pointRadius: 0, pointHoverRadius: 4, fill: true, tension: .4, cubicInterpolationMode: "monotone" }] },
-      options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false }, elements: { line: { borderJoinStyle: "round", borderCapStyle: "round" } },
-        plugins: { legend: { display: false }, tooltip: { callbacks: { title: (x) => x[0] ? x[0].label : "", label: (x) => "₹" + fmt(x.parsed.y, 0) } } },
-        scales: { x: { grid: { display: false }, ticks: { color: c.tick, maxTicksLimit: 6, font: { size: 10 } } }, y: { grid: { color: c.grid }, ticks: { color: c.tick, font: { size: 10 }, callback: (v) => moneyShort(v) } } } } });
+    const c = homeColors(), isDd = kind === "dd";
+    const last = data.length ? data[data.length - 1] : 0;
+    const color = isDd ? c.call : (last >= 0 ? c.put : c.call);
+    const mainLbl = isDd ? "Drawdown" : "Cumulative P&L";
+    const capDs = _capRefDs("Opening capital", dayOpen || labels.map(() => 0), "y1");
+    const mainDs = {
+      label: mainLbl, data, borderColor: color,
+      backgroundColor: color + "22",
+      borderWidth: 2.5, pointRadius: 0, pointHoverRadius: 4,
+      fill: isDd ? true : { target: { value: 0 }, above: c.put + "22", below: c.call + "22" },
+      tension: .4, cubicInterpolationMode: "monotone", yAxisID: "y",
+    };
+    if (!isDd) {
+      mainDs.segment = { borderColor: (ctx) => (ctx.p1.parsed.y >= ctx.p0.parsed.y ? c.put : c.call) };
+    }
+    homeCharts[id] = new Chart(el, {
+      type: "line",
+      data: { labels, datasets: [mainDs, capDs] },
+      options: {
+        responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false }, elements: { line: { borderJoinStyle: "round", borderCapStyle: "round" } },
+        plugins: {
+          legend: _capLegend(c.tick, 10),
+          tooltip: { callbacks: { title: (x) => x[0] ? x[0].label : "", label: (x) => x.dataset.label + ": ₹" + fmt(x.parsed.y, 0) } }
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: c.tick, maxTicksLimit: 6, font: { size: 10 } } },
+          y: { position: "left", grid: { color: c.grid }, ticks: { color: c.tick, font: { size: 10 }, callback: (v) => moneyShort(v) } },
+          y1: _y1Scale(),
+        }
+      }
+    });
   }
-  function drawBalance(labels, equity, opening) {
+  function drawBalance(labels, equity, dayOpen, opening) {
     const el = $("homeBalance"); if (!el || typeof Chart === "undefined") return;
     if (homeCharts.homeBalance) homeCharts.homeBalance.destroy();
     const c = homeColors();
-    const bal = equity.map((v) => round2(opening + v));
-    const up = bal.length ? bal[bal.length - 1] >= (opening || bal[0]) : true;
+    const op = +opening || 0;
+    const bal = equity.map((v) => round2(op + v));
+    const up = bal.length ? bal[bal.length - 1] >= (op || bal[0]) : true;
     const col = up ? c.put : c.call;
-    const ds = [{ label: "Balance", data: bal, borderColor: col, backgroundColor: col + "22", borderWidth: 2.5, pointRadius: 0, pointHoverRadius: 4, fill: true, tension: .4, cubicInterpolationMode: "monotone" }];
-    if (opening) ds.push({ label: "Opening capital", data: labels.map(() => opening), borderColor: c.tick, borderWidth: 1, borderDash: [4, 4], pointRadius: 0, fill: false });
-    homeCharts.homeBalance = new Chart(el, { type: "line", data: { labels, datasets: ds },
-      options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
-        plugins: { legend: { display: opening > 0, labels: { color: c.tick, boxWidth: 12, font: { size: 10 } } }, tooltip: { callbacks: { label: (x) => x.dataset.label + ": ₹" + fmt(x.parsed.y, 0) } } },
-        scales: { x: { grid: { display: false }, ticks: { color: c.tick, maxTicksLimit: 6, font: { size: 10 } } }, y: { grid: { color: c.grid }, ticks: { color: c.tick, font: { size: 10 }, callback: (v) => moneyShort(v) } } } } });
+    const ds = [
+      {
+        label: "Balance", data: bal, borderColor: col, backgroundColor: col + "22",
+        borderWidth: 2.5, pointRadius: 0, pointHoverRadius: 4,
+        fill: { target: { value: op }, above: c.put + "22", below: c.call + "22" },
+        segment: { borderColor: (ctx) => (ctx.p1.parsed.y >= ctx.p0.parsed.y ? c.put : c.call) },
+        tension: .4, cubicInterpolationMode: "monotone",
+      },
+      _capRefDs("Opening capital", dayOpen || labels.map(() => op)),
+    ];
+    homeCharts.homeBalance = new Chart(el, {
+      type: "line", data: { labels, datasets: ds },
+      options: {
+        responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+        plugins: { legend: { display: true, labels: { color: c.tick, boxWidth: 12, font: { size: 10 } } }, tooltip: { callbacks: { label: (x) => x.dataset.label + ": ₹" + fmt(x.parsed.y, 0) } } },
+        scales: { x: { grid: { display: false }, ticks: { color: c.tick, maxTicksLimit: 6, font: { size: 10 } } }, y: { grid: { color: c.grid }, ticks: { color: c.tick, font: { size: 10 }, callback: (v) => moneyShort(v) } } }
+      }
+    });
   }
-  function drawHomeBars(id, daily) {
+  function drawHomeBars(id, daily, dayOpen) {
     const el = $(id); if (!el || typeof Chart === "undefined") return;
     if (homeCharts[id]) homeCharts[id].destroy();
     const c = homeColors();
-    const data = daily.map((x) => +x.realized || 0);
-    homeCharts[id] = new Chart(el, { type: "bar",
-      data: { labels: daily.map((x) => x.date), datasets: [{ data, backgroundColor: data.map((v) => v >= 0 ? c.put : c.call), borderWidth: 0 }] },
-      options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (x) => "₹" + fmt(x.parsed.y, 0) } } },
-        scales: { x: { grid: { display: false }, ticks: { color: c.tick, maxTicksLimit: 8, font: { size: 10 } } }, y: { grid: { color: c.grid }, ticks: { color: c.tick, font: { size: 10 }, callback: (v) => moneyShort(v) } } } } });
+    const labels = daily.map((x) => x.date), data = daily.map((x) => +x.realized || 0);
+    const capDs = _capRefDs("Opening capital", dayOpen || labels.map(() => 0), "y1");
+    homeCharts[id] = new Chart(el, {
+      type: "bar",
+      data: { labels, datasets: [{ label: "Daily P&L", data, backgroundColor: data.map((v) => v >= 0 ? c.put : c.call), borderWidth: 0, yAxisID: "y" }, capDs] },
+      options: {
+        responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: _capLegend(c.tick, 10),
+          tooltip: { callbacks: { label: (x) => x.dataset.label + ": ₹" + fmt(x.parsed.y, 0) } }
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: c.tick, maxTicksLimit: 8, font: { size: 10 } } },
+          y: { position: "left", grid: { color: c.grid }, ticks: { color: c.tick, font: { size: 10 }, callback: (v) => moneyShort(v) } },
+          y1: _y1Scale(),
+        }
+      }
+    });
   }
   function drawWinLoss(id, w, l) {
     const el = $(id); if (!el || typeof Chart === "undefined") return;
     if (homeCharts[id]) homeCharts[id].destroy();
     const c = homeColors();
-    homeCharts[id] = new Chart(el, { type: "doughnut",
+    homeCharts[id] = new Chart(el, {
+      type: "doughnut",
       data: { labels: ["Win days", "Loss days"], datasets: [{ data: [w, l], backgroundColor: [c.put, c.call], borderWidth: 0 }] },
-      options: { responsive: true, maintainAspectRatio: false, cutout: "60%", plugins: { legend: { position: "bottom", labels: { color: c.tick, boxWidth: 12, font: { size: 11 } } } } } });
+      options: { responsive: true, maintainAspectRatio: false, cutout: "60%", plugins: { legend: { position: "bottom", labels: { color: c.tick, boxWidth: 12, font: { size: 11 } } } } }
+    });
   }
   function shiftCal(delta) {
     if (!calMonth) return;
@@ -609,15 +810,28 @@
     let html = dows.map((d) => `<div class="cal-dow">${d}</div>`).join("") + `<div class="cal-dow cal-wkh">Week</div>`;
     let mtot = 0, mdays = 0, day = 1 - firstDow, week = 1;
     while (day <= days) {
-      let row = "", wtot = 0, wdays = 0;
+      let row = "", wtot = 0, wdays = 0, wStart = null, wEnd = null;
       for (let i = 0; i < 7; i++, day++) {
         if (day < 1 || day > days) { row += `<div class="cal-cell empty"></div>`; continue; }
-        const v = byDate[`${y}-${pad(m + 1)}-${pad(day)}`];
-        let cls = "cal-cell", inner = `<span class="cal-d">${day}</span>`;
-        if (v != null) { cls += v > 0 ? " pos" : v < 0 ? " neg" : " flat"; inner += `<span class="cal-pl">${moneyShort(v)}</span>`; wtot += v; wdays++; mtot += v; mdays++; }
-        row += `<div class="${cls}">${inner}</div>`;
+        const ds = `${y}-${pad(m + 1)}-${pad(day)}`;
+        if (!wStart) wStart = ds;
+        wEnd = ds;
+        const v = byDate[ds];
+        const dTitle = `${dows[i]}, ${day} ${_MONF[m].slice(0, 3)} ${y}`;
+        let cls = "cal-cell", inner = `<span class="cal-d">${day}</span>`, attrs = "";
+        if (v != null) {
+          cls += v > 0 ? " pos" : v < 0 ? " neg" : " flat";
+          inner += `<span class="cal-pl">${moneyShort(v)}</span>`;
+          attrs = ` data-tip-title="${dTitle}" data-tip-val="${signed(v)}" data-tip-cls="${v >= 0 ? "pos" : "neg"}" data-range-start="${ds}" data-range-end="${ds}" data-range-title="${dTitle}"`;
+          wtot += v; wdays++; mtot += v; mdays++;
+        }
+        row += `<div class="${cls}"${attrs}>${inner}</div>`;
       }
-      row += `<div class="cal-week ${wdays ? (wtot >= 0 ? "pos" : "neg") : ""}">` +
+      const wTitle = `Week ${week} · ${_MONF[m].slice(0, 3)} ${y}`;
+      const wAttrs = wdays
+        ? ` data-tip-title="${wTitle}" data-tip-val="${signed(wtot)}" data-tip-cls="${wtot >= 0 ? "pos" : "neg"}" data-tip-sub="${wdays} trading day${wdays === 1 ? "" : "s"}" data-range-start="${wStart}" data-range-end="${wEnd}" data-range-title="${wTitle}"`
+        : "";
+      row += `<div class="cal-week ${wdays ? (wtot >= 0 ? "pos" : "neg") : ""}"${wAttrs}>` +
         `<div class="cw-l">Week ${week}</div>` +
         `<div class="cw-v">${wdays ? moneyShort(wtot) : "₹0"}</div>` +
         `<div class="cw-d">${wdays} day${wdays === 1 ? "" : "s"}</div></div>`;
@@ -628,16 +842,403 @@
       ? `Month: <b class="${mtot >= 0 ? "pos" : "neg"}">${signed(mtot)}</b> · ${mdays} trading day${mdays > 1 ? "s" : ""}`
       : `<span class="modal-sub">No trades this month</span>`;
   }
+  // Trade details modal for clicking a Calendar day/week or Heatmap cell
+  function closeDayTradesModal() {
+    if ($("dayTradesModal")) $("dayTradesModal").classList.add("hidden");
+  }
+  let _dtBound = false;
+  function bindDayTradesModal() {
+    if (_dtBound) return; _dtBound = true;
+    if ($("dtModalClose")) $("dtModalClose").addEventListener("click", closeDayTradesModal);
+    if ($("dayTradesModal")) $("dayTradesModal").addEventListener("click", (e) => {
+      if (e.target === $("dayTradesModal")) closeDayTradesModal();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && $("dayTradesModal") && !$("dayTradesModal").classList.contains("hidden")) closeDayTradesModal();
+    });
+    if ($("viewHome")) $("viewHome").addEventListener("click", (e) => {
+      const card = e.target.closest("[data-range-start]");
+      if (!card) return;
+      hideTip();
+      openDayTradesModal(card.dataset.rangeStart, card.dataset.rangeEnd, card.dataset.rangeTitle || card.dataset.rangeStart);
+    });
+  }
+  bindDayTradesModal();
+  async function openDayTradesModal(start, end, title) {
+    const modal = $("dayTradesModal");
+    if (!modal) return;
+    const isWeek = start && end && start !== end;
+    $("dtModalTitle").textContent = title || start;
+    $("dtModalSub").textContent = isWeek ? `${start} → ${end}` : start;
+    $("dtModalStats").innerHTML = "";
+    $("dtModalBody").innerHTML = `<p class="modal-sub" style="padding:12px 0">Loading trades…</p>`;
+    modal.classList.remove("hidden");
+    try {
+      const d = await (await fetch(`/api/journal/trades?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`)).json();
+      const rows = d.trades || [];
+      const tot = d.total_pnl || 0, wins = d.wins || 0, losses = d.losses || 0;
+      const wr = (wins + losses) ? (wins / (wins + losses) * 100).toFixed(1) + "%" : "—";
+      const pnls = rows.map((t) => +t.pnl || 0);
+      const best = pnls.length ? Math.max(...pnls) : 0;
+      const worst = pnls.length ? Math.min(...pnls) : 0;
+      const stat = (k, v, cls) => `<div class="dt-stat"><div class="k">${k}</div><div class="v ${cls || ""}">${v}</div></div>`;
+      $("dtModalStats").innerHTML =
+        stat("Net / Gross P&L", signed(tot), tot >= 0 ? "pos" : "neg") +
+        stat("Total Trades", `${rows.length} (${wins}W · ${losses}L)`, "") +
+        stat("Win Rate", wr, (wins + losses) && wins >= losses ? "pos" : "neg") +
+        stat("Best / Worst", pnls.length ? `${signed(best)} / ${signed(worst)}` : "—", "");
+      if (!rows.length) {
+        $("dtModalBody").innerHTML = `<p class="empty">No trades recorded for this period.</p>`;
+        return;
+      }
+      $("dtModalBody").innerHTML =
+        `<table class="data"><thead><tr>` +
+        (isWeek ? `<th style="text-align:left">Date</th>` : "") +
+        `<th style="text-align:left">Time</th><th style="text-align:left">Symbol</th><th>Side</th><th>Qty</th><th>Exit</th><th>P&amp;L</th><th style="text-align:left">Setup</th><th style="text-align:left">Note</th></tr></thead><tbody>` +
+        rows.map((t) => {
+          _tradeCache.set(String(t.id), t);
+          const pl = +t.pnl || 0, cls = pl > 0 ? "pos" : pl < 0 ? "neg" : "";
+          const sc = (t.side === "LONG" || t.side === "BUY") ? "pos" : "neg";
+          const tag = t.tag || {};
+          const plan = tag.on_plan === 1 ? " ✓" : tag.on_plan === 0 ? " ✗" : "";
+          return `<tr class="tr-click" data-tid="${esc(t.id)}">` +
+            (isWeek ? `<td style="text-align:left">${esc(t.date || "")}</td>` : "") +
+            `<td style="text-align:left">${esc(t.time || "—")}</td>` +
+            `<td style="text-align:left"><b>${esc(t.symbol || "")}</b></td>` +
+            `<td class="${sc}">${esc(t.side || "")}</td>` +
+            `<td>${fmt(t.qty)}</td>` +
+            `<td>${fmt(t.price, 2)}</td>` +
+            `<td class="${cls}"><b>${t.pnl == null ? "—" : signed(pl)}</b></td>` +
+            `<td style="text-align:left">${esc((tag.setup || "—") + plan)}</td>` +
+            `<td style="text-align:left;color:var(--muted)">${esc(tag.note || "")}</td>` +
+            `</tr>`;
+        }).join("") + `</tbody></table>`;
+    } catch (err) {
+      $("dtModalBody").innerHTML = `<p class="jnote err">Could not load trades: ${esc(err.message)}</p>`;
+    }
+  }
   function renderHomeTrades(trades) {
     const rows = (trades || []).filter((t) => t.pnl != null && t.date !== "unknown").slice(0, 7);
     if (!rows.length) { $("homeTrades").innerHTML = `<p class="modal-sub">No closed trades in this period yet.</p>`; return; }
     $("homeTrades").innerHTML =
       `<table class="dash-tt"><thead><tr><th>Date</th><th>Symbol</th><th>Side</th><th class="r">Qty</th><th class="r">P&L</th></tr></thead><tbody>` +
       rows.map((t) => {
+        _tradeCache.set(String(t.id), t);
         const pl = +t.pnl || 0, sc = (t.side === "LONG" || t.side === "BUY") ? "pos" : "neg";
-        return `<tr><td>${esc(t.date || "")}</td><td>${esc(t.symbol || "")}</td><td class="${sc}">${esc(t.side || "")}</td>` +
+        return `<tr class="tr-click" data-tid="${esc(t.id)}"><td>${esc(t.date || "")}</td><td>${esc(t.symbol || "")}</td><td class="${sc}">${esc(t.side || "")}</td>` +
           `<td class="r">${fmt(t.qty)}</td><td class="r ${pl >= 0 ? "pos" : "neg"}"><b>${signed(pl)}</b></td></tr>`;
       }).join("") + `</tbody></table>`;
+  }
+
+  // ---- Trade detail popup with Entry/Exit chart ----
+  const _tradeCache = new Map();
+  let _tmChart = null, _tmTv = null, _tmRo = null, _tmState = null;
+  function _deriveEntry(t) {
+    if (t.entry_price != null && !isNaN(t.entry_price)) return +t.entry_price;
+    const q = +t.qty || 0, ex = +t.price || 0, pl = +t.pnl;
+    if (!q || isNaN(pl)) return ex;
+    const isLong = t.side === "LONG" || t.side === "BUY";
+    return Math.max(0, round2(isLong ? ex - pl / q : ex + pl / q));
+  }
+  function _clearTradeChart() {
+    if (_tmRo) { try { _tmRo.disconnect(); } catch (e) { } _tmRo = null; }
+    if (_tmTv) { try { _tmTv.remove(); } catch (e) { } _tmTv = null; }
+    if (_tmChart) { try { _tmChart.destroy(); } catch (e) { } _tmChart = null; }
+  }
+  function closeTradeModal() {
+    if ($("tradeModal")) $("tradeModal").classList.add("hidden");
+    _clearTradeChart();
+    _tmState = null;
+  }
+  (function bindTradeModal() {
+    if ($("tmClose")) $("tmClose").addEventListener("click", closeTradeModal);
+    if ($("tradeModal")) $("tradeModal").addEventListener("click", (e) => {
+      if (e.target === $("tradeModal")) closeTradeModal();
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && $("tradeModal") && !$("tradeModal").classList.contains("hidden")) closeTradeModal();
+    });
+    document.addEventListener("click", (e) => {
+      if (e.target.closest("select, input, button, a")) return;
+      const tr = e.target.closest("tr.tr-click[data-tid]");
+      if (!tr) return;
+      const t = _tradeCache.get(tr.dataset.tid);
+      if (t) openTradeModal(t);
+    });
+  })();
+  function _closestIdx(labels, targetTime) {
+    if (!targetTime || !labels.length) return -1;
+    const toMin = (s) => { const m = String(s).match(/(\d{1,2}):(\d{2})/); return m ? (+m[1]) * 60 + (+m[2]) : null; };
+    const tm = toMin(targetTime);
+    if (tm == null) return -1;
+    let best = 0, bestD = Infinity;
+    labels.forEach((l, i) => { const lm = toMin(l); if (lm != null && Math.abs(lm - tm) < bestD) { bestD = Math.abs(lm - tm); best = i; } });
+    return best;
+  }
+  const _istFmt = new Intl.DateTimeFormat("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", hour12: false });
+  function _setOhlcBar(label, bar) {
+    const el = $("tmOhlcBar");
+    if (!el) return;
+    if (!bar) { el.innerHTML = esc(label || ""); return; }
+    const chg = bar.close - bar.open;
+    const pct = bar.open ? (chg / bar.open) * 100 : 0;
+    const cls = chg >= 0 ? "pos" : "neg";
+    const tStr = typeof bar.time === "number" ? _istFmt.format(new Date(bar.time * 1000)) : (bar.t || "");
+    el.innerHTML =
+      `<b>${esc(label)}</b>` +
+      (tStr ? `<span>${esc(tStr)} IST</span>` : "") +
+      `<span>O <b class="${cls}">${fmt(bar.open, 2)}</b></span>` +
+      `<span>H <b class="${cls}">${fmt(bar.high, 2)}</b></span>` +
+      `<span>L <b class="${cls}">${fmt(bar.low, 2)}</b></span>` +
+      `<span>C <b class="${cls}">${fmt(bar.close, 2)}</b></span>` +
+      `<span class="${cls}">${chg >= 0 ? "+" : ""}${fmt(chg, 2)} (${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)</span>`;
+  }
+  function _drawTrajectoryFallback(t, ep, ex, candles) {
+    const tvEl = $("tmTvChart"), cvEl = $("tradeDetailChart");
+    if (tvEl) tvEl.classList.add("hidden");
+    if (!cvEl || typeof Chart === "undefined") return;
+    cvEl.classList.remove("hidden");
+    const c = homeColors(), win = (+t.pnl || 0) >= 0, lineCol = win ? c.put : c.call;
+    let labels, data, eIdx, xIdx;
+    if (candles && candles.length >= 2) {
+      labels = candles.map((p) => p.t);
+      data = candles.map((p) => p.c ?? p.p);
+      eIdx = t.entry_time ? _closestIdx(labels, t.entry_time) : 0;
+      xIdx = t.time ? _closestIdx(labels, t.time) : labels.length - 1;
+      if (eIdx === xIdx && labels.length > 1) eIdx = Math.max(0, xIdx - 1);
+      if (eIdx >= 0) data[eIdx] = ep;
+      if (xIdx >= 0) data[xIdx] = ex;
+    } else {
+      const eLbl = t.entry_time ? t.entry_time.slice(0, 5) : "Entry";
+      const xLbl = t.time ? t.time.slice(0, 5) : "Exit";
+      labels = [eLbl, "Mid", xLbl];
+      data = [ep, round2((ep + ex) / 2), ex];
+      eIdx = 0; xIdx = 2;
+    }
+    const ePts = data.map((_, i) => (i === eIdx ? ep : null));
+    const xPts = data.map((_, i) => (i === xIdx ? ex : null));
+    const markerPlugin = {
+      id: "entryExitTags",
+      afterDatasetsDraw(chart) {
+        const { ctx, chartArea } = chart;
+        if (!chartArea) return;
+        const drawTag = (dsIndex, idx, text, bg) => {
+          const pt = chart.getDatasetMeta(dsIndex)?.data?.[idx];
+          if (!pt) return;
+          ctx.save();
+          ctx.font = "700 10.5px system-ui, sans-serif";
+          const padX = 6, h = 18, w = ctx.measureText(text).width + padX * 2;
+          const x = Math.max(chartArea.left + 2, Math.min(chartArea.right - w - 2, pt.x - w / 2));
+          let y = pt.y - h - 8;
+          if (y < chartArea.top + 2) y = pt.y + 8;
+          ctx.fillStyle = bg; ctx.beginPath(); ctx.roundRect(x, y, w, h, 5); ctx.fill();
+          ctx.fillStyle = "#fff"; ctx.textBaseline = "middle"; ctx.fillText(text, x + padX, y + h / 2);
+          ctx.restore();
+        };
+        drawTag(2, eIdx, "ENTRY ₹" + fmt(ep, 2), "#3b82f6");
+        drawTag(3, xIdx, "EXIT ₹" + fmt(ex, 2), lineCol);
+      },
+    };
+    _tmChart = new Chart(cvEl, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          { label: "Price", data, borderColor: lineCol, backgroundColor: lineCol + "22", borderWidth: 2.5, tension: .28, pointRadius: 0, fill: true },
+          { label: "Entry level", data: labels.map(() => ep), borderColor: "#3b82f6", borderWidth: 1.2, borderDash: [5, 4], pointRadius: 0, fill: false },
+          { label: "Entry", data: ePts, borderColor: "#fff", backgroundColor: "#3b82f6", borderWidth: 2, pointRadius: 6, showLine: false },
+          { label: "Exit", data: xPts, borderColor: "#fff", backgroundColor: lineCol, borderWidth: 2, pointRadius: 6, showLine: false },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        layout: { padding: { top: 20, right: 10, left: 6, bottom: 4 } },
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: { filter: (i) => i.datasetIndex !== 1, callbacks: { label: (ctx) => `${ctx.dataset.label}: ₹${fmt(ctx.parsed.y, 2)}` } },
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { color: c.tick, maxTicksLimit: 7, font: { size: 10 } } },
+          y: { grid: { color: c.grid }, ticks: { color: c.tick, font: { size: 10 }, callback: (v) => "₹" + fmt(v, 2) } },
+        },
+      },
+      plugins: [markerPlugin],
+    });
+    _setOhlcBar(`${t.symbol || "Option"} · Entry ₹${fmt(ep, 2)} → Exit ₹${fmt(ex, 2)}`, null);
+  }
+  function _drawTvCandles(opts) {
+    const tvEl = $("tmTvChart"), cvEl = $("tradeDetailChart");
+    if (!tvEl || typeof LightweightCharts === "undefined") {
+      return _drawTrajectoryFallback(_tmState.t, _tmState.ep, _tmState.ex, opts.rawBars || []);
+    }
+    if (cvEl) cvEl.classList.add("hidden");
+    tvEl.classList.remove("hidden");
+    const cs = getComputedStyle(document.documentElement);
+    const bg = (cs.getPropertyValue("--panel-2") || "#131722").trim();
+    const txt = (cs.getPropertyValue("--text") || "#d1d4dc").trim();
+    const muted = (cs.getPropertyValue("--muted") || "#787b86").trim();
+    const grid = (cs.getPropertyValue("--line") || "rgba(128,128,128,0.14)").trim();
+    const upCol = (cs.getPropertyValue("--put") || "#089981").trim();
+    const dnCol = (cs.getPropertyValue("--call") || "#f23645").trim();
+    // Deduplicate & sort strictly ascending by Unix timestamp
+    const seen = new Set(), bars = [];
+    for (const p of (opts.rawBars || [])) {
+      const time = Number(p.ts);
+      if (!time || seen.has(time) || p.o == null || p.c == null) continue;
+      seen.add(time);
+      bars.push({ time, open: +p.o, high: +p.h, low: +p.l, close: +p.c, t: p.t });
+    }
+    bars.sort((a, b) => a.time - b.time);
+    if (bars.length < 2) {
+      return _drawTrajectoryFallback(_tmState.t, _tmState.ep, _tmState.ex, opts.rawBars || []);
+    }
+    _tmTv = LightweightCharts.createChart(tvEl, {
+      width: tvEl.clientWidth || 760,
+      height: tvEl.clientHeight || 360,
+      layout: { background: { color: bg }, textColor: muted, fontFamily: "system-ui, -apple-system, sans-serif", fontSize: 11 },
+      grid: { vertLines: { color: grid, style: 1 }, horzLines: { color: grid, style: 1 } },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      rightPriceScale: { borderColor: grid, scaleMargins: { top: 0.14, bottom: 0.14 } },
+      timeScale: {
+        borderColor: grid, timeVisible: true, secondsVisible: false, rightOffset: 4,
+        tickMarkFormatter: (time) => _istFmt.format(new Date(Number(time) * 1000)),
+      },
+      localization: { timeFormatter: (time) => _istFmt.format(new Date(Number(time) * 1000)) },
+    });
+    const series = _tmTv.addCandlestickSeries({
+      upColor: upCol, downColor: dnCol, borderUpColor: upCol, borderDownColor: dnCol,
+      wickUpColor: upCol, wickDownColor: dnCol,
+    });
+    series.setData(bars);
+
+    const { t, ep, ex } = _tmState;
+    const times = bars.map((b) => b.t);
+    let eIdx = t.entry_time ? _closestIdx(times, t.entry_time) : 0;
+    let xIdx = t.time ? _closestIdx(times, t.time) : bars.length - 1;
+    if (eIdx < 0) eIdx = 0;
+    if (xIdx < 0) xIdx = bars.length - 1;
+    const isLong = t.side === "LONG" || t.side === "BUY";
+    const win = (+t.pnl || 0) >= 0;
+    const markers = [];
+    if (eIdx === xIdx) {
+      markers.push({ time: bars[eIdx].time, position: "belowBar", color: "#3b82f6", shape: "arrowUp", text: `ENTRY ₹${fmt(ep, 2)} → EXIT ₹${fmt(ex, 2)}` });
+    } else {
+      const m1 = { time: bars[eIdx].time, position: isLong ? "belowBar" : "aboveBar", color: "#3b82f6", shape: isLong ? "arrowUp" : "arrowDown", text: opts.priceIsOption ? `ENTRY ₹${fmt(ep, 2)}` : `ENTRY (${t.entry_time ? t.entry_time.slice(0, 5) : bars[eIdx].t})` };
+      const m2 = { time: bars[xIdx].time, position: isLong ? "aboveBar" : "belowBar", color: win ? upCol : dnCol, shape: isLong ? "arrowDown" : "arrowUp", text: opts.priceIsOption ? `EXIT ₹${fmt(ex, 2)}` : `EXIT (${t.time ? t.time.slice(0, 5) : bars[xIdx].t})` };
+      markers.push(...[m1, m2].sort((a, b) => a.time - b.time));
+    }
+    series.setMarkers(markers);
+
+    if (opts.priceIsOption) {
+      series.createPriceLine({ price: ep, color: "#3b82f6", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "Entry" });
+      series.createPriceLine({ price: ex, color: win ? upCol : dnCol, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "Exit" });
+    } else if (_tmState.showPivots && opts.pivots) {
+      const pv = opts.pivots;
+      const pvSpec = [
+        ["r3", "R3", "#2563eb"], ["r2", "R2", "#2563eb"], ["r1", "R1", "#3b82f6"],
+        ["p", "P", "#60a5fa"], ["s1", "S1", "#3b82f6"], ["s2", "S2", "#2563eb"],
+      ];
+      pvSpec.forEach(([k, lbl, col]) => {
+        if (pv[k] != null) series.createPriceLine({ price: +pv[k], color: col, lineWidth: k === "p" ? 2 : 1, lineStyle: 2, axisLabelVisible: true, title: lbl });
+      });
+    }
+    _tmTv.timeScale().fitContent();
+    const last = bars[bars.length - 1];
+    _setOhlcBar(opts.label, last);
+    _tmTv.subscribeCrosshairMove((param) => {
+      const d = param && param.seriesData ? param.seriesData.get(series) : null;
+      _setOhlcBar(opts.label, d || last);
+    });
+    if (typeof ResizeObserver !== "undefined") {
+      _tmRo = new ResizeObserver(() => {
+        if (_tmTv && tvEl.clientWidth > 0) _tmTv.applyOptions({ width: tvEl.clientWidth, height: tvEl.clientHeight });
+      });
+      _tmRo.observe(tvEl);
+    }
+  }
+  function _renderTmView() {
+    if (!_tmState) return;
+    _clearTradeChart();
+    const { t, ep, ex, candles, underlying, mode } = _tmState;
+    const seg = $("tmModeSeg"), pivBtn = $("tmPivotBtn");
+    const hasOpt = candles && candles.length >= 2;
+    const hasUnd = underlying && (underlying.points || []).length >= 2;
+    const buttons = [];
+    const isOptSym = /\b(CALL|PUT)\b|(?:CE|PE|FUT)$|\s/i.test(t.symbol || "");
+    if (hasOpt) buttons.push(["option", isOptSym ? "Option 5m OHLC" : "Stock 5m OHLC"]);
+    if (hasUnd) buttons.push(["underlying", `${underlying.symbol} 5m OHLC`]);
+    if (!hasOpt) buttons.push(["trajectory", "Option Entry → Exit"]);
+    if (seg) {
+      seg.innerHTML = buttons.map(([id, lbl]) => `<button type="button" class="${mode === id ? "active" : ""}" data-tm-mode="${id}">${esc(lbl)}</button>`).join("");
+      seg.classList.toggle("hidden", buttons.length < 2);
+      seg.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+        _tmState.mode = b.dataset.tmMode;
+        _renderTmView();
+      }));
+    }
+    if (pivBtn) {
+      const showPivBtn = mode === "underlying" && !!(underlying && underlying.pivots);
+      pivBtn.classList.toggle("hidden", !showPivBtn);
+      pivBtn.classList.toggle("active", !!_tmState.showPivots);
+    }
+    if (mode === "option" && hasOpt) {
+      _drawTvCandles({ rawBars: candles, priceIsOption: true, label: `${t.symbol} · 5m` });
+    } else if (mode === "underlying" && hasUnd) {
+      _drawTvCandles({ rawBars: underlying.points, pivots: underlying.pivots, priceIsOption: false, label: `${underlying.symbol} · 5m` });
+    } else {
+      _drawTrajectoryFallback(t, ep, ex, []);
+    }
+  }
+  if ($("tmPivotBtn")) $("tmPivotBtn").addEventListener("click", () => {
+    if (!_tmState) return;
+    _tmState.showPivots = !_tmState.showPivots;
+    _renderTmView();
+  });
+  async function openTradeModal(t) {
+    const modal = $("tradeModal");
+    if (!modal) return;
+    const ep = _deriveEntry(t), ex = +t.price || 0, q = +t.qty || 0, pl = +t.pnl || 0;
+    const isLong = t.side === "LONG" || t.side === "BUY";
+    const pts = isLong ? (ex - ep) : (ep - ex);
+    const pct = ep > 0 ? (pts / ep * 100) : 0;
+    $("tmTitle").textContent = t.symbol || "Trade";
+    $("tmSide").textContent = t.side || "";
+    $("tmSide").className = "sig " + (isLong ? "bull" : "bear");
+    $("tmPnl").textContent = t.pnl == null ? "—" : signed(pl);
+    $("tmPnl").className = "tm-pnl " + (pl >= 0 ? "pos" : "neg");
+    const eWin = (t.entry_time ? t.entry_time.slice(0, 8) + " → " : "") + (t.time ? t.time.slice(0, 8) : "");
+    $("tmSub").textContent = [t.date, eWin, (t.source || "").toUpperCase()].filter(Boolean).join(" · ");
+    const tag = t.tag || {};
+    const planTxt = tag.on_plan === 1 ? "✓ On plan" : tag.on_plan === 0 ? "✗ Off plan" : "—";
+    const cell = (k, v, cls) => `<div class="tm-cell"><div class="k">${k}</div><div class="v ${cls || ""}">${v}</div></div>`;
+    $("tmDetails").innerHTML =
+      cell("Entry Price", "₹" + fmt(ep, 2)) +
+      cell("Exit Price", "₹" + fmt(ex, 2)) +
+      cell("Move", `${pts >= 0 ? "+" : ""}${fmt(pts, 2)} pts (${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%)`, pts >= 0 ? "pos" : "neg") +
+      cell("Quantity", fmt(q)) +
+      cell("Buy Value", inr(round2((isLong ? ep : ex) * q))) +
+      cell("Sell Value", inr(round2((isLong ? ex : ep) * q))) +
+      cell("Setup", esc(tag.setup || "—")) +
+      cell("Plan", planTxt, tag.on_plan === 1 ? "pos" : tag.on_plan === 0 ? "neg" : "") +
+      cell("Note", esc(tag.note || "—"));
+    $("tmChartNote").classList.add("hidden");
+    if ($("tmModeSeg")) $("tmModeSeg").classList.add("hidden");
+    if ($("tmPivotBtn")) $("tmPivotBtn").classList.add("hidden");
+    _tmState = { t, ep, ex, candles: [], underlying: null, mode: "trajectory", showPivots: true };
+    modal.classList.remove("hidden");
+    _renderTmView();
+    try {
+      const qs = `?symbol=${encodeURIComponent(t.symbol || "")}&date=${encodeURIComponent(t.date || "")}` +
+        `&entry_price=${ep}&exit_price=${ex}&entry_time=${encodeURIComponent(t.entry_time || "")}&exit_time=${encodeURIComponent(t.time || "")}`;
+      const d = await (await fetch("/api/journal/trade-chart" + qs)).json();
+      if (!_tmState || _tmState.t !== t) return;
+      _tmState.candles = d.candles || [];
+      _tmState.underlying = d.underlying || null;
+      _tmState.mode = _tmState.candles.length >= 2 ? "option" : (_tmState.underlying?.points?.length >= 2 ? "underlying" : "trajectory");
+      _renderTmView();
+      if (d.note) { $("tmChartNote").textContent = d.note; $("tmChartNote").classList.remove("hidden"); }
+    } catch (e) { /* keep trajectory fallback */ }
   }
 
   // ---------------------------------------------------------- screener
@@ -664,8 +1265,8 @@
     try {
       const needHist = [...scrFilters].some((f) => SCR_HIST.has(f)) ? 1 : 0;
       const qs = "?sort=" + encodeURIComponent(scrSort) +
-                 "&index=" + encodeURIComponent(scrIndex) +
-                 "&hist=" + needHist;
+        "&index=" + encodeURIComponent(scrIndex) +
+        "&hist=" + needHist;
       const r = await fetch("/api/screener" + qs);
       if (r.status === 401) { scrStatus("Log in to Fyers on the Dashboard tab to load live stocks.", true); return; }
       const d = await r.json();
@@ -745,7 +1346,7 @@
       rows = [];
       for (const m of scrAllRows) {
         const matched = active.filter((f) => { try { return SCR_PRED[f](m); } catch (e) { return false; } })
-                              .map((f) => SCR_LABELS[f] || f);
+          .map((f) => SCR_LABELS[f] || f);
         if (matched.length) { m.matched = matched; rows.push(m); }
       }
     } else {
@@ -1253,11 +1854,15 @@
       renderFilterLabel();
       renderChart();
       renderTrades(d.recent_trades);
+      const src = d.source || "";
       dhanConnected = d.dhan_connected;
+      $("dhanBtn").style.display = src === "dhan" ? "" : "none";
       $("dhanBtn").textContent = dhanConnected ? "⬇ Sync from Dhan ✓" : "🔑 Connect Dhan";
-      $("fyersSyncBtn").style.display = d.can_sync ? "" : "none";   // only on DATA_SOURCE=fyers
-      if (dhanConnected && !dhanAutoSynced) dhanSyncNow(true);      // Dhan auto-sync once per load
-      if (d.can_sync && !fyersAutoSynced) fyersSyncNow(true);       // Fyers auto-sync once per load
+      $("fyersSyncBtn").style.display = (src === "fyers" || src === "upstox") ? "" : "none";
+      if (src === "upstox") $("fyersSyncBtn").textContent = "⟳ Sync from Upstox";
+      else if (src === "fyers") $("fyersSyncBtn").textContent = "⟳ Sync from Fyers";
+      if (src === "dhan" && dhanConnected && !dhanAutoSynced) dhanSyncNow(true);
+      if ((src === "fyers" || src === "upstox") && !fyersAutoSynced) fyersSyncNow(true);
     } catch (e) {
       status("Could not load journal: " + e.message, true);
     } finally {
@@ -1319,8 +1924,12 @@
     const idx = months.indexOf(c.month);
     $("capPrev").disabled = idx <= 0;
     $("capNext").disabled = idx < 0 || idx >= months.length - 1;
-    // sync buttons: Fyers only when on the Fyers source; Dhan label by connection
-    $("capFyersSync").style.display = c.can_sync ? "" : "none";
+    // sync buttons: show only the single active broker
+    const csrc = c.source || "";
+    $("capFyersSync").style.display = (csrc === "fyers" || csrc === "upstox") ? "" : "none";
+    if (csrc === "upstox") $("capFyersSync").textContent = "⟳ Sync today (Upstox)";
+    else if (csrc === "fyers") $("capFyersSync").textContent = "⟳ Sync today (Fyers)";
+    $("capDhanSync").style.display = csrc === "dhan" ? "" : "none";
     $("capDhanSync").textContent = c.dhan_connected
       ? "⬇ Sync this month (Dhan)" : "🔑 Connect Dhan";
     const inp = $("openingCapital");
@@ -1399,11 +2008,15 @@
     const data = {
       labels,
       datasets: [
-        { type: "bar", label: "Daily P&L", data: bars, backgroundColor: barColors,
-          borderRadius: 3, maxBarThickness: 18, yAxisID: "y", order: 2 },
-        { type: "line", label: "Capital", data: line, borderColor: "#f0b429",
+        {
+          type: "bar", label: "Daily P&L", data: bars, backgroundColor: barColors,
+          borderRadius: 3, maxBarThickness: 18, yAxisID: "y", order: 2
+        },
+        {
+          type: "line", label: "Capital", data: line, borderColor: "#f0b429",
           backgroundColor: "rgba(240,180,41,.12)", borderWidth: 2, tension: .25,
-          pointRadius: 0, fill: true, yAxisID: "y1", order: 1, spanGaps: true },
+          pointRadius: 0, fill: true, yAxisID: "y1", order: 1, spanGaps: true
+        },
       ],
     };
     const opts = {
@@ -1414,12 +2027,18 @@
         tooltip: { callbacks: { label: (x) => `${x.dataset.label}: ${x.raw == null ? "—" : "₹" + Number(x.raw).toLocaleString("en-IN")}` } },
       },
       scales: {
-        x: { ticks: { color: "#8b95a7", maxRotation: 0, autoSkip: true, maxTicksLimit: 16 },
-             grid: { display: false } },
-        y: { position: "left", ticks: { color: "#8b95a7", callback: (v) => (Math.abs(v) >= 1000 ? "₹" + Math.round(v / 1000) + "k" : "₹" + v) },
-             grid: { color: "rgba(128,128,128,.18)" } },
-        y1: { position: "right", ticks: { color: "#b78a1a", callback: (v) => "₹" + Math.round(v / 1000) + "k" },
-              grid: { display: false } },
+        x: {
+          ticks: { color: "#8b95a7", maxRotation: 0, autoSkip: true, maxTicksLimit: 16 },
+          grid: { display: false }
+        },
+        y: {
+          position: "left", ticks: { color: "#8b95a7", callback: (v) => (Math.abs(v) >= 1000 ? "₹" + Math.round(v / 1000) + "k" : "₹" + v) },
+          grid: { color: "rgba(128,128,128,.18)" }
+        },
+        y1: {
+          position: "right", ticks: { color: "#b78a1a", callback: (v) => "₹" + Math.round(v / 1000) + "k" },
+          grid: { display: false }
+        },
       },
     };
     if (!capitalChart) capitalChart = new Chart($("capitalChart"), { data, options: opts });
@@ -1460,9 +2079,11 @@
     const estimated = typed ? false : capData.costs_estimated;
     const total_cost = brokerage + charges;
     const net = gross - total_cost;
-    drawCapitalTiles({ opening, gross_pnl: gross, brokerage, charges, total_cost,
+    drawCapitalTiles({
+      opening, gross_pnl: gross, brokerage, charges, total_cost,
       net_pnl: net, total_pnl: net, costs_estimated: estimated,
-      closing: opening + net, return_pct: opening ? (net / opening * 100) : 0 });
+      closing: opening + net, return_pct: opening ? (net / opening * 100) : 0
+    });
   }
   function capCostBody() {
     const body = { opening: Number($("openingCapital").value) || 0, month: capMonth };
@@ -1479,7 +2100,7 @@
     fetch("/api/journal/capital", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(capCostBody()),
-    }).then((r) => r.json()).then(renderCapital).catch(() => {});
+    }).then((r) => r.json()).then(renderCapital).catch(() => { });
   }
   ["openingCapital", "capBrokerage", "capCharges"].forEach((id) => {
     const el = $(id);
@@ -1495,7 +2116,7 @@
       fetch("/api/journal/daynote", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ date: el.dataset.date, note: el.value }),
-      }).catch(() => {});
+      }).catch(() => { });
     });
   }
   function capShiftMonth(delta) {
@@ -1716,16 +2337,26 @@
         backgroundColor: agg.map((a) => heatColor(a.value, a.value >= 0 ? maxPos : maxNeg)),
       };
     }
+    const op = +(homeData && homeData.summary && homeData.summary.opening_capital) || 0;
+    let runOpen = op;
+    const dayOpen = agg.map((a) => { const v = round2(runOpen); runOpen += (+a.value || 0); return v; });
+    const capDs = _capRefDs("Opening capital", dayOpen, "y1");
+    dataset.yAxisID = "y";
     const opts = {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => signed(c.raw) } } },
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: _capLegend("#8b95a7", 11),
+        tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${c.datasetIndex === 0 ? signed(c.raw) : "₹" + fmt(c.raw, 0)}` } }
+      },
       scales: {
         x: { ticks: { color: "#8b95a7", maxRotation: 60, minRotation: 0 }, grid: { display: false } },
-        y: { ticks: { color: "#8b95a7" }, grid: { color: "rgba(128,128,128,.18)" } },
+        y: { position: "left", ticks: { color: "#8b95a7" }, grid: { color: "rgba(128,128,128,.18)" } },
+        y1: _y1Scale(),
       },
     };
     if (pnlChart) pnlChart.destroy();
-    pnlChart = new Chart($("pnlChart"), { type: chartType === "line" ? "line" : "bar", data: { labels, datasets: [dataset] }, options: opts });
+    pnlChart = new Chart($("pnlChart"), { type: chartType === "line" ? "line" : "bar", data: { labels, datasets: [dataset, capDs] }, options: opts });
   }
 
   // chart control segments
@@ -1901,13 +2532,14 @@
         : `No trades in the selected ${jfMode === "range" ? "date range" : "period"}. Try a wider range or <b>All time</b>.`;
     }
     tb.innerHTML = rows.map((t) => {
+      _tradeCache.set(String(t.id), t);
       const pnl = t.pnl == null ? "—" : signed(t.pnl);
       const cls = t.pnl > 0 ? "pos" : t.pnl < 0 ? "neg" : "";
       const sideCls = t.side === "LONG" || t.side === "BUY" ? "pos" : "neg";
       const dateTxt = t.date === "unknown" ? "—" : t.date;
       const tag = t.tag || {};
       const on = tag.on_plan;
-      return `<tr><td style="text-align:left">${dateTxt}</td><td style="text-align:left">${t.time || ""}</td>
+      return `<tr class="tr-click" data-tid="${esc(t.id)}"><td style="text-align:left">${dateTxt}</td><td style="text-align:left">${t.time || ""}</td>
         <td style="text-align:left">${t.symbol || ""}</td><td class="${sideCls}">${t.side || ""}</td>
         <td>${fmt(t.qty)}</td><td>${fmt(t.price, 2)}</td><td class="${cls}"><b>${pnl}</b></td>
         <td><select class="setupin" data-id="${t.id}">${setupOptions(tag.setup || "")}</select></td>
@@ -1927,8 +2559,10 @@
     const note = (row.querySelector(".notein") || {}).value || "";
     const plan = (row.querySelector(".planin") || {}).value;
     const id = (row.querySelector("[data-id]") || {}).dataset?.id;
-    return { id, setup, note: note,
-      on_plan: plan === "1" ? 1 : plan === "0" ? 0 : null };
+    return {
+      id, setup, note: note,
+      on_plan: plan === "1" ? 1 : plan === "0" ? 0 : null
+    };
   }
   function saveTag(payload) {
     return fetch("/api/journal/trades/tag", {
@@ -1942,7 +2576,7 @@
   $("tradesTable").addEventListener("change", (e) => {
     const el = e.target;
     if (!el.dataset || !el.dataset.id) return;
-    saveTag(rowTag(el.closest("tr"))).catch(() => {});
+    saveTag(rowTag(el.closest("tr"))).catch(() => { });
   });
 
   // Explicit "Save details" button: writes every row's setup/plan/note at once
@@ -2117,8 +2751,10 @@
         indexAxis: "y", responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => signed(c.raw) } } },
         scales: {
-          x: { ticks: { color: "#8b95a7", callback: (v) => (Math.abs(v) >= 1000 ? "₹" + Math.round(v / 1000) + "k" : "₹" + v) },
-               grid: { color: "rgba(128,128,128,.18)" } },
+          x: {
+            ticks: { color: "#8b95a7", callback: (v) => (Math.abs(v) >= 1000 ? "₹" + Math.round(v / 1000) + "k" : "₹" + v) },
+            grid: { color: "rgba(128,128,128,.18)" }
+          },
           y: { ticks: { color: "#8b95a7", font: { weight: "600" } }, grid: { display: false } },
         },
       },
@@ -2155,7 +2791,7 @@
         const met = d.met;
         badge = met ? `<span class="wk-badge done">✓ Done</span>`
           : d.actual >= 0 ? `<span class="wk-badge done">Done</span>`
-          : `<span class="wk-badge miss">Done · loss</span>`;
+            : `<span class="wk-badge miss">Done · loss</span>`;
         cls = met ? "met" : "";
         if (d.today) cls += " today";
         actualHtml = `<div class="wk-actual ${d.actual >= 0 ? "pos" : "neg"}">${signed(d.actual)}</div>`;
@@ -2202,7 +2838,7 @@
       } else {
         badge = w.met ? `<span class="wk-badge done">✓ Done</span>`
           : w.actual >= 0 ? `<span class="wk-badge done">Done</span>`
-          : `<span class="wk-badge miss">Done · loss</span>`;
+            : `<span class="wk-badge miss">Done · loss</span>`;
         cls = w.met ? "met" : "";
         if (w.current) cls += " today";
         actualHtml = `<div class="wk-actual ${w.actual >= 0 ? "pos" : "neg"}">${signed(w.actual)}</div>`;
@@ -2306,8 +2942,10 @@
   let symbolSegBuilt = false;
   let insStart = "", insEnd = "";     // custom date range (overrides period when both set)
 
-  const WD_FULL = { Mon: "Mondays", Tue: "Tuesdays", Wed: "Wednesdays",
-    Thu: "Thursdays", Fri: "Fridays", Sat: "Saturdays", Sun: "Sundays" };
+  const WD_FULL = {
+    Mon: "Mondays", Tue: "Tuesdays", Wed: "Wednesdays",
+    Thu: "Thursdays", Fri: "Fridays", Sat: "Saturdays", Sun: "Sundays"
+  };
 
   document.querySelectorAll("#periodSeg button").forEach((b) =>
     b.addEventListener("click", () => {
@@ -2378,8 +3016,8 @@
         // only call the low day "worst" when it's an actual loss; else it's just the weakest
         (ww && ww !== bw
           ? (ww.pnl < 0
-              ? ` · worst weekday <b style="color:var(--call)">${ww.day} (${signed(ww.pnl)})</b>`
-              : ` · weakest weekday <b style="color:var(--muted)">${ww.day} (${signed(ww.pnl)})</b>`)
+            ? ` · worst weekday <b style="color:var(--call)">${ww.day} (${signed(ww.pnl)})</b>`
+            : ` · weakest weekday <b style="color:var(--muted)">${ww.day} (${signed(ww.pnl)})</b>`)
           : "");
       renderNarrative(d.narrative, d.days);
       renderWeekdayChart(d.weekday);
@@ -2461,14 +3099,14 @@
       const tgtNote = target > 0 ? ` · target ${inr(target)}/day` : "";
       const lowCard = lowIsLoss
         ? `<div class="wd-bw bad"><div class="k">📉 Worst day <small>(losing)</small></div>` +
-            `<div class="d">${WD_FULL[low.day] || low.day}</div>` +
-            `<div class="p neg"><b>${signed(low.pnl)}</b> over ${low.days} day${low.days === 1 ? "" : "s"} · ${low.win_rate}% win</div></div>`
+        `<div class="d">${WD_FULL[low.day] || low.day}</div>` +
+        `<div class="p neg"><b>${signed(low.pnl)}</b> over ${low.days} day${low.days === 1 ? "" : "s"} · ${low.win_rate}% win</div></div>`
         : `<div class="wd-bw"><div class="k">📉 Weakest day <small>(still green)</small></div>` +
-            `<div class="d">${WD_FULL[low.day] || low.day}</div>` +
-            `<div class="p pos"><b>${signed(low.pnl)}</b> over ${low.days} day${low.days === 1 ? "" : "s"} · ${low.win_rate}% win</div></div>`;
+        `<div class="d">${WD_FULL[low.day] || low.day}</div>` +
+        `<div class="p pos"><b>${signed(low.pnl)}</b> over ${low.days} day${low.days === 1 ? "" : "s"} · ${low.win_rate}% win</div></div>`;
       bw.innerHTML = [
         `<div class="wd-bw good"><div class="k">📈 Best day${tgtNote}</div><div class="d">${WD_FULL[best.day] || best.day}</div>` +
-          `<div class="p pos"><b>${signed(best.pnl)}</b> over ${best.days} day${best.days === 1 ? "" : "s"} · ${best.win_rate}% win</div></div>`,
+        `<div class="p pos"><b>${signed(best.pnl)}</b> over ${best.days} day${best.days === 1 ? "" : "s"} · ${best.win_rate}% win</div></div>`,
         lowCard,
       ].join("");
     }
@@ -2561,16 +3199,27 @@
   function renderWeekdayChart(wd) {
     const data = {
       labels: wd.map((w) => w.day),
-      datasets: [{ label: "P&L", data: wd.map((w) => w.pnl),
-        backgroundColor: wd.map((w) => (w.pnl >= 0 ? "#26a69a" : "#ef5350")) }],
+      datasets: [{
+        label: "P&L", data: wd.map((w) => w.pnl),
+        backgroundColor: wd.map((w) => (w.pnl >= 0 ? "#26a69a" : "#ef5350"))
+      }],
     };
     const opts = {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false },
-        tooltip: { callbacks: { label: (c) => signed(c.raw), afterLabel: (c) => {
-          const w = wd[c.dataIndex]; return `${w.days} days · ${w.win_rate}% win · avg ${signed(w.avg)}`; } } } },
-      scales: { x: { ticks: { color: "#8b95a7", font: { weight: "600" } }, grid: { display: false } },
-        y: { ticks: { color: "#8b95a7" }, grid: { color: "rgba(128,128,128,.18)" } } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (c) => signed(c.raw), afterLabel: (c) => {
+              const w = wd[c.dataIndex]; return `${w.days} days · ${w.win_rate}% win · avg ${signed(w.avg)}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: "#8b95a7", font: { weight: "600" } }, grid: { display: false } },
+        y: { ticks: { color: "#8b95a7" }, grid: { color: "rgba(128,128,128,.18)" } }
+      },
     };
     if (weekdayChart) weekdayChart.destroy();
     weekdayChart = new Chart($("weekdayChart"), { type: "bar", data, options: opts });

@@ -138,7 +138,8 @@ def import_csv(content: str) -> dict:
         return {"ok": False, "error": "Found a symbol column but no side/price or P&L columns."}
 
     store.upsert_trades([{k: t.get(k) for k in
-        ("id", "date", "time", "symbol", "side", "qty", "price", "value", "pnl", "closed", "source")}
+        ("id", "date", "time", "symbol", "side", "qty", "price", "value",
+         "pnl", "closed", "source", "entry_price", "entry_date", "entry_time")}
         for t in created])
     store.rebuild_daily_from_trades()
 

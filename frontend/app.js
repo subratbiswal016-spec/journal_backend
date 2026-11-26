@@ -72,6 +72,7 @@ async function init() {
     $("loginBtn").textContent = "🔐 " + CFG.login_label;
     $("loginTitle").textContent = "Connect " + (CFG.source || "broker").replace(/^\w/, c => c.toUpperCase());
   }
+  initBrokerTabs();
   state.symbol = CFG.symbols[0] || "NIFTY";
   state.countdown = CFG.refresh_seconds;
 
@@ -101,6 +102,87 @@ async function init() {
   await load(true);
   startTick();
   initTicker();
+}
+
+// ------------------------------------------------------------ broker picker
+let selectedBroker = "fyers";
+function selectBrokerTab(b) {
+  selectedBroker = b || "fyers";
+  document.querySelectorAll("#brokerTabs .broker-tab").forEach((t) =>
+    t.classList.toggle("active", t.dataset.broker === selectedBroker));
+  const oauth = $("loginOAuthPane"), dhanP = $("loginDhanPane"), demoP = $("loginDemoPane");
+  if (oauth) oauth.classList.toggle("hidden", selectedBroker === "dhan" || selectedBroker === "mock");
+  if (dhanP) dhanP.classList.toggle("hidden", selectedBroker !== "dhan");
+  if (demoP) demoP.classList.toggle("hidden", selectedBroker !== "mock");
+
+  const meta = (CFG.brokers && CFG.brokers[selectedBroker]) || {};
+  const names = { fyers: "Fyers", dhan: "Dhan", upstox: "Upstox", mock: "Demo Mode" };
+  if ($("loginTitle")) $("loginTitle").textContent = "Connect " + (names[selectedBroker] || "Broker");
+  const hint = $("loginHint");
+  if (hint) { hint.className = "login-hint"; hint.textContent = ""; }
+
+  if (selectedBroker === "fyers" || selectedBroker === "upstox") {
+    const btn = $("loginBtn");
+    if (btn) {
+      btn.textContent = "🔐 Login with " + names[selectedBroker];
+      btn.href = "/auth/login?broker=" + encodeURIComponent(selectedBroker);
+      btn.classList.toggle("disabled", meta.configured === false);
+    }
+    if ($("loginDesc")) {
+      $("loginDesc").textContent = selectedBroker === "upstox"
+        ? "Log in with Upstox to load live option-chain data and your Upstox trades."
+        : "Log in with Fyers to load live option-chain data, stock screener, and your Fyers trades.";
+    }
+    if (meta.configured === false && hint) {
+      hint.className = "login-hint err";
+      hint.textContent = selectedBroker === "upstox"
+        ? "Set UPSTOX_API_KEY and UPSTOX_API_SECRET on the server to enable Upstox login."
+        : "Set FYERS_APP_ID and FYERS_SECRET_ID on the server to enable Fyers login.";
+    }
+  }
+}
+function initBrokerTabs() {
+  const tabs = $("brokerTabs");
+  if (!tabs) return;
+  const cur = (CFG.source && CFG.source !== "nse") ? CFG.source : "fyers";
+  selectBrokerTab(cur);
+  tabs.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-broker]");
+    if (b) selectBrokerTab(b.dataset.broker);
+  });
+  if ($("loginDhanBtn")) $("loginDhanBtn").addEventListener("click", async () => {
+    const tok = ($("loginDhanToken") ? $("loginDhanToken").value : "").trim();
+    const cid = ($("loginDhanCid") ? $("loginDhanCid").value : "").trim();
+    const hint = $("loginHint"), btn = $("loginDhanBtn");
+    if (!tok) { if (hint) { hint.className = "login-hint err"; hint.textContent = "Paste your Dhan access token first."; } return; }
+    btn.disabled = true; btn.textContent = "Connecting…";
+    if (hint) { hint.className = "login-hint"; hint.textContent = "Verifying token with Dhan…"; }
+    try {
+      const r = await fetch("/api/journal/dhan/connect", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ access_token: tok, client_id: cid }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || "Dhan connection failed");
+      location.href = "/?login=ok";
+    } catch (err) {
+      if (hint) { hint.className = "login-hint err"; hint.textContent = err.message; }
+      btn.disabled = false; btn.textContent = "🔐 Connect Dhan";
+    }
+  });
+  if ($("loginDemoBtn")) $("loginDemoBtn").addEventListener("click", async () => {
+    const btn = $("loginDemoBtn");
+    btn.disabled = true; btn.textContent = "Starting Demo…";
+    try {
+      await fetch("/api/auth/broker", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ broker: "mock" }),
+      });
+      location.href = "/";
+    } catch (e) {
+      btn.disabled = false; btn.textContent = "▶ Enter Demo Mode";
+    }
+  });
 }
 
 // ------------------------------------------------------------ user profile
@@ -142,16 +224,16 @@ async function loadProfile() {
     if ($("profileSub")) $("profileSub").textContent = subBits.join(" · ");
     _fillAvatar($("profileAvatar"), d.avatar, name);
     _fillAvatar($("profileAvatarLg"), d.avatar, name);
-    const canAuth = d.source === "fyers" || d.source === "upstox";
-    if ($("profileReconnect")) $("profileReconnect").classList.toggle("hidden", !canAuth);
-    if ($("logoutBtn")) $("logoutBtn").classList.toggle("hidden", !canAuth);
-    const acts = wrap.querySelector(".prof-actions");
-    if (acts) acts.classList.toggle("hidden", !canAuth);
+    const canOAuth = d.source === "fyers" || d.source === "upstox";
+    const canLogout = canOAuth || d.source === "dhan";
+    if ($("profileReconnect")) $("profileReconnect").classList.toggle("hidden", !canOAuth);
+    if ($("logoutBtn")) $("logoutBtn").classList.toggle("hidden", !canLogout);
+    if ($("switchBrokerBtn")) $("switchBrokerBtn").classList.remove("hidden");
     wrap.classList.remove("hidden");
   } catch (e) { /* keep hidden on error */ }
 }
 (function initProfileMenu() {
-  const btn = $("profileBtn"), menu = $("profileMenu"), logout = $("logoutBtn");
+  const btn = $("profileBtn"), menu = $("profileMenu"), logout = $("logoutBtn"), sw = $("switchBrokerBtn");
   if (btn && menu) {
     btn.addEventListener("click", (e) => { e.stopPropagation(); menu.classList.toggle("hidden"); });
     document.addEventListener("click", (e) => {
@@ -159,14 +241,20 @@ async function loadProfile() {
     });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") menu.classList.add("hidden"); });
   }
+  async function doSignOut() {
+    try { await fetch("/api/auth/logout", { method: "POST" }); } catch (e) {}
+    if (menu) menu.classList.add("hidden");
+    if ($("profileWrap")) $("profileWrap").classList.add("hidden");
+    const cur = (CFG.source && CFG.source !== "nse" && CFG.source !== "mock") ? CFG.source : "fyers";
+    selectBrokerTab(cur);
+    showLogin();
+  }
+  if (sw) sw.addEventListener("click", doSignOut);
   if (logout) {
     logout.addEventListener("click", async () => {
       logout.disabled = true;
-      try { await fetch("/api/auth/logout", { method: "POST" }); } catch (e) {}
-      if (menu) menu.classList.add("hidden");
-      if ($("profileWrap")) $("profileWrap").classList.add("hidden");
+      await doSignOut();
       logout.disabled = false;
-      showLogin();
     });
   }
 })();
@@ -499,13 +587,14 @@ function showStatus(msg, cls) {
       b.classList.toggle("active", b.dataset.theme === active));
   };
   const apply = (t) => {
-    if (!THEMES.includes(t)) t = "dark";
+    if (!THEMES.includes(t)) t = "sand";
     EXTRA.forEach((c) => document.documentElement.classList.remove(c));
     if (t !== "dark") document.documentElement.classList.add(t);
     try { localStorage.setItem("oi-theme", t); } catch (e) { }
     sync();
     try { window.dispatchEvent(new CustomEvent("oi-theme-change", { detail: t })); } catch (e) { }
   };
+  try { if (!localStorage.getItem("oi-theme") && cur() === "dark") document.documentElement.classList.add("sand"); } catch (e) { }
   sync();
   picker.addEventListener("click", (e) => {
     const b = e.target.closest("[data-theme]");

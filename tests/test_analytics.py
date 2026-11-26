@@ -109,3 +109,26 @@ def test_insights_range(db):
     assert ins["total"] == pytest.approx(10000)
     assert ins["range"] == {"start": "2026-10-13", "end": "2026-10-15"}
     assert isinstance(ins["narrative"], list) and ins["narrative"]
+
+
+def test_active_source_isolation(tmp_path, monkeypatch):
+    monkeypatch.setattr(store, "_DB_PATH", tmp_path / "iso.db")
+    monkeypatch.setattr(store, "_ACTIVE_SOURCE", None)
+    store.init()
+    store.upsert_trades([
+        {**_t("f1", "2026-10-13", "NIFTY", 4000), "source": "fyers"},
+        {**_t("d1", "2026-10-14", "BANKNIFTY", 1500), "source": "dhan"},
+        {**_t("u1", "2026-10-15", "SENSEX", -500), "source": "upstox"},
+    ])
+    try:
+        store.set_active_source("dhan")
+        store.rebuild_daily_from_trades()
+        assert [t["id"] for t in store.recent_trades()] == ["d1"]
+        assert A.summary()["total_realized"] == pytest.approx(1500)
+
+        store.set_active_source("upstox")
+        store.rebuild_daily_from_trades()
+        assert [t["id"] for t in store.recent_trades()] == ["u1"]
+        assert A.summary()["total_realized"] == pytest.approx(-500)
+    finally:
+        store.set_active_source(None)

@@ -30,9 +30,12 @@ CREATE TABLE IF NOT EXISTS trades (
     qty       REAL,
     price     REAL,
     value     REAL,
-    pnl       REAL,               -- realized P&L for a closed round-trip (nullable)
-    closed    INTEGER DEFAULT 0,  -- 1 if this row is a closed round-trip with pnl
-    source    TEXT                -- 'fyers' | 'csv'
+    pnl         REAL,               -- realized P&L for a closed round-trip (nullable)
+    closed      INTEGER DEFAULT 0,  -- 1 if this row is a closed round-trip with pnl
+    source      TEXT,               -- 'fyers' | 'dhan' | 'upstox' | 'csv'
+    entry_price REAL,
+    entry_date  TEXT,
+    entry_time  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_trades_date ON trades(date);
 
@@ -69,9 +72,19 @@ def init() -> None:
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _lock, _conn() as c:
         c.executescript(_SCHEMA)
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(trades)").fetchall()}
+        for col, typ in (("entry_price", "REAL"), ("entry_date", "TEXT"), ("entry_time", "TEXT")):
+            if col not in cols:
+                c.execute(f"ALTER TABLE trades ADD COLUMN {col} {typ}")
 
 
 # ----------------------------------------------------------------- trades
+_TRADE_FIELDS = (
+    "id", "date", "time", "symbol", "side", "qty", "price", "value",
+    "pnl", "closed", "source", "entry_price", "entry_date", "entry_time",
+)
+
+
 def upsert_trades(rows: list[dict]) -> int:
     """Insert or replace trade rows. Returns count written."""
     if not rows:
@@ -79,40 +92,67 @@ def upsert_trades(rows: list[dict]) -> int:
     with _lock, _conn() as c:
         c.executemany(
             """INSERT OR REPLACE INTO trades
-               (id, date, time, symbol, side, qty, price, value, pnl, closed, source)
-               VALUES (:id, :date, :time, :symbol, :side, :qty, :price, :value, :pnl, :closed, :source)""",
+               (id, date, time, symbol, side, qty, price, value, pnl, closed, source, entry_price, entry_date, entry_time)
+               VALUES (:id, :date, :time, :symbol, :side, :qty, :price, :value, :pnl, :closed, :source, :entry_price, :entry_date, :entry_time)""",
             [_trade_defaults(r) for r in rows],
         )
     return len(rows)
 
 
 def _trade_defaults(r: dict) -> dict:
-    out = {k: r.get(k) for k in
-           ("id", "date", "time", "symbol", "side", "qty", "price", "value", "pnl", "closed", "source")}
+    out = {k: r.get(k) for k in _TRADE_FIELDS}
     out["closed"] = 1 if r.get("pnl") is not None else int(r.get("closed", 0) or 0)
     return out
 
 
+_ACTIVE_SOURCE: Optional[str] = None
+
+
+def set_active_source(source: Optional[str]) -> None:
+    """Restrict trade/daily queries to a single broker source (None = all)."""
+    global _ACTIVE_SOURCE
+    _ACTIVE_SOURCE = source or None
+
+
+def get_active_source() -> Optional[str]:
+    return _ACTIVE_SOURCE
+
+
 def trades_between(start: str, end: str) -> list[dict]:
     with _lock, _conn() as c:
-        cur = c.execute(
-            "SELECT * FROM trades WHERE date >= ? AND date <= ? ORDER BY date DESC, time DESC",
-            (start, end))
+        if _ACTIVE_SOURCE:
+            cur = c.execute(
+                "SELECT * FROM trades WHERE source = ? AND date >= ? AND date <= ? ORDER BY date DESC, time DESC",
+                (_ACTIVE_SOURCE, start, end))
+        else:
+            cur = c.execute(
+                "SELECT * FROM trades WHERE date >= ? AND date <= ? ORDER BY date DESC, time DESC",
+                (start, end))
         return [dict(r) for r in cur.fetchall()]
 
 
 def trades_on(date: str) -> list[dict]:
     with _lock, _conn() as c:
-        cur = c.execute("SELECT * FROM trades WHERE date = ? ORDER BY time ASC", (date,))
+        if _ACTIVE_SOURCE:
+            cur = c.execute(
+                "SELECT * FROM trades WHERE source = ? AND date = ? ORDER BY time ASC",
+                (_ACTIVE_SOURCE, date))
+        else:
+            cur = c.execute("SELECT * FROM trades WHERE date = ? ORDER BY time ASC", (date,))
         return [dict(r) for r in cur.fetchall()]
 
 
 def recent_trades(limit: int = 300) -> list[dict]:
     """All trades, dated first then undated ('unknown'), most recent first."""
     with _lock, _conn() as c:
-        cur = c.execute(
-            "SELECT * FROM trades ORDER BY (date = 'unknown'), date DESC, time DESC LIMIT ?",
-            (limit,))
+        if _ACTIVE_SOURCE:
+            cur = c.execute(
+                "SELECT * FROM trades WHERE source = ? ORDER BY (date = 'unknown'), date DESC, time DESC LIMIT ?",
+                (_ACTIVE_SOURCE, limit))
+        else:
+            cur = c.execute(
+                "SELECT * FROM trades ORDER BY (date = 'unknown'), date DESC, time DESC LIMIT ?",
+                (limit,))
         return [dict(r) for r in cur.fetchall()]
 
 
@@ -129,13 +169,23 @@ def rebuild_daily_from_trades() -> None:
     """Recompute daily_pnl from closed trades (used after CSV import / sync)."""
     with _lock, _conn() as c:
         c.execute("DELETE FROM daily_pnl")
-        rows = c.execute(
-            """SELECT date,
-                      COALESCE(SUM(pnl), 0) AS realized,
-                      COUNT(*) AS trades,
-                      SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) AS wins,
-                      SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) AS losses
-               FROM trades WHERE closed = 1 GROUP BY date""").fetchall()
+        if _ACTIVE_SOURCE:
+            rows = c.execute(
+                """SELECT date,
+                          COALESCE(SUM(pnl), 0) AS realized,
+                          COUNT(*) AS trades,
+                          SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) AS wins,
+                          SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) AS losses
+                   FROM trades WHERE closed = 1 AND source = ? GROUP BY date""",
+                (_ACTIVE_SOURCE,)).fetchall()
+        else:
+            rows = c.execute(
+                """SELECT date,
+                          COALESCE(SUM(pnl), 0) AS realized,
+                          COUNT(*) AS trades,
+                          SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) AS wins,
+                          SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) AS losses
+                   FROM trades WHERE closed = 1 GROUP BY date""").fetchall()
         for r in rows:
             c.execute(
                 """INSERT OR REPLACE INTO daily_pnl (date, realized, trades, wins, losses, source)
@@ -225,12 +275,13 @@ if os.getenv("MONGO_URL"):
          set_daily, rebuild_daily_from_trades, daily_between, all_daily,
          get_setting, set_setting, set_tag, tags_map,
          clear_source, clear_source_date, clear_source_range,
-         clear_all_trades) = (
+         clear_all_trades, set_active_source, get_active_source) = (
             _m.init, _m.upsert_trades, _m.trades_between, _m.trades_on,
             _m.recent_trades, _m.set_daily, _m.rebuild_daily_from_trades,
             _m.daily_between, _m.all_daily, _m.get_setting, _m.set_setting,
             _m.set_tag, _m.tags_map, _m.clear_source, _m.clear_source_date,
-            _m.clear_source_range, _m.clear_all_trades)
+            _m.clear_source_range, _m.clear_all_trades,
+            _m.set_active_source, _m.get_active_source)
         BACKEND = "mongo"
     except Exception as e:  # noqa: BLE001 - never crash the app on DB wiring
         import sys
