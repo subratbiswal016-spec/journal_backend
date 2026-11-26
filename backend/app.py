@@ -636,6 +636,18 @@ def journal_sync():
         raise HTTPException(status_code=502, detail=f"Sync failed: {e}")
 
 
+@app.post("/api/journal/sync-history")
+def journal_sync_history(start: Optional[str] = Query(None), end: Optional[str] = Query(None)):
+    """Pull dated trade history from Fyers (Reports → Trade History) for a date
+    range — so the dashboard shows past trades without a CSV import."""
+    try:
+        return jsync.sync_fyers_history(_source, start, end)
+    except AuthRequired:
+        raise HTTPException(status_code=401, detail="login_required")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"History sync failed: {e}")
+
+
 @app.post("/api/journal/import")
 async def journal_import(request: Request):
     content = (await request.body()).decode("utf-8", errors="replace")

@@ -277,15 +277,24 @@
   }
   async function homeSync() {
     const btn = $("homeSyncBtn"), old = btn.textContent;
-    btn.disabled = true; btn.textContent = "Syncing…";
+    btn.disabled = true; btn.textContent = "Syncing history…";
     try {
-      const r = await fetch("/api/journal/sync", { method: "POST" });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        if (r.status === 401) { homeMsg("Log in to Fyers (open Market, then log in) before syncing.", true); return; }
+      // Pull dated trade history for the selected range (Fyers Reports API) — not
+      // just today — so past trades show without a CSV. All-time → last ~2 years.
+      let r = homeRange(homePeriod);
+      if (!r.start) {
+        const s = new Date(); s.setFullYear(s.getFullYear() - 2);
+        r = { start: s.toISOString().slice(0, 10), end: new Date().toISOString().slice(0, 10) };
+      }
+      const resp = await fetch(`/api/journal/sync-history?start=${r.start}&end=${r.end}`, { method: "POST" });
+      const d = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        if (resp.status === 401) { homeMsg("Log in to Fyers (open Market, then log in) before syncing.", true); return; }
         throw new Error(d.detail || d.error || "Sync failed");
       }
-      homeMsg(`✅ Synced ${d.round_trips || 0} trade${d.round_trips === 1 ? "" : "s"} from Fyers · today's P&L ${signed(d.realized_today || 0)}` + (d.open_positions ? ` · ${d.open_positions} open` : ""));
+      if (!d.round_trips) { homeMsg(d.note || "No trades found in this range.", true); }
+      else homeMsg(`✅ Synced ${d.round_trips} trades from Fyers` +
+        (d.date_range ? ` (${d.date_range[0]} → ${d.date_range[1]})` : "") + ` · P&L ${signed(d.realized || 0)}`);
       loadHome();
     } catch (e) { homeMsg("Sync failed: " + e.message, true); }
     finally { btn.disabled = false; btn.textContent = old; }

@@ -269,6 +269,41 @@ class FyersDataSource(DataSource):
         _rate_limit()             # respect 5/sec + 50/min + daily caps
         return self._check(self._model().positions())
 
+    def fetch_trade_history(self, from_date: str | None = None,
+                            to_date: str | None = None) -> list[dict]:
+        """All executed trades in a date range via Fyers Reports → Trade History.
+        Defaults to the current financial year. Paginated (100/page)."""
+        fy = self._model()
+        getter = getattr(fy, "tradehistory", None)
+        if not callable(getter):
+            raise RuntimeError("This fyers-apiv3 version has no trade-history API; "
+                               "update the package or import a CSV.")
+        out: list[dict] = []
+        page = 1
+        while page <= 200:                      # safety cap (~20k trades)
+            data = {"page_size": "100", "page_no": str(page)}
+            if from_date:
+                data["from_date"] = from_date
+            if to_date:
+                data["to_date"] = to_date
+            _rate_limit()
+            resp = getter(data=data)
+            if not isinstance(resp, dict):
+                break
+            if resp.get("s") == "error":
+                msg = str(resp.get("message", ""))
+                if resp.get("code") in (-8, -15, -16, -17) or "token" in msg.lower():
+                    raise AuthRequired(f"Fyers token rejected: {msg}")
+                raise RuntimeError(f"Fyers error: {msg or resp}")
+            rows = resp.get("data") or resp.get("tradeBook") or []
+            if not rows:
+                break
+            out.extend(rows)
+            if len(rows) < 100:
+                break
+            page += 1
+        return out
+
     # ----------------------------------------------------------- screener
     def calls_today(self) -> int:
         """Total Fyers calls made today (shared across dashboard + screener)."""
