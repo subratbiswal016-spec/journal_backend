@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Option OI Dashboard</title>
   <script>try{if(localStorage.getItem('oi-theme')==='light')document.documentElement.classList.add('light');}catch(e){}</script>
-  <link rel="stylesheet" href="style.css?v=36" />
+  <link rel="stylesheet" href="style.css?v=37" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
   <script src="app.js?v=9" defer></script>
-  <script src="journal.js?v=36" defer></script>
+  <script src="journal.js?v=37" defer></script>
 </head>
 <body>
   <aside class="sidebar" id="sidebar">
@@ -95,20 +95,24 @@
       <div id="homeSyncMsg" class="jnote hidden"></div>
       <div id="homeKpis" class="kpi-row"></div>
       <div class="dash-grid">
-        <div class="jcard dash-wide"><h3 class="dash-ct">Cumulative net P&amp;L</h3><div class="dash-chart"><canvas id="homeEquity"></canvas></div></div>
         <div class="jcard dash-score"><h3 class="dash-ct">Performance score</h3>
           <div class="score-wrap"><div class="dash-chart score-chart"><canvas id="homeRadar"></canvas></div>
             <div class="score-num"><b id="scoreVal">—</b><span>/ 100</span><small id="scoreTag"></small></div></div></div>
-        <div class="jcard"><h3 class="dash-ct">Win / loss days</h3><div class="dash-chart"><canvas id="homeWinLoss"></canvas></div></div>
-        <div class="jcard dash-wide dash-cal">
+        <div class="jcard"><h3 class="dash-ct">Progress tracker <small style="color:var(--muted);font-weight:400">· trading-day P&amp;L</small></h3><div id="homeHeat" class="heat-wrap"></div></div>
+        <div class="jcard"><h3 class="dash-ct">Cumulative net P&amp;L</h3><div class="dash-chart"><canvas id="homeEquity"></canvas></div></div>
+
+        <div class="jcard"><h3 class="dash-ct">Net daily P&amp;L</h3><div class="dash-chart"><canvas id="homeDaily"></canvas></div></div>
+        <div class="jcard"><h3 class="dash-ct">Recent trades</h3><div id="homeTrades" class="dash-trades"></div></div>
+        <div class="jcard"><h3 class="dash-ct">Drawdown</h3><div class="dash-chart"><canvas id="homeDrawdown"></canvas></div></div>
+
+        <div class="jcard sp2 dash-cal">
           <div class="cal-head"><button id="calPrev" class="jbtn">‹</button><h3 class="dash-ct" id="calTitle">—</h3><button id="calNext" class="jbtn">›</button></div>
           <div id="homeCal" class="cal-grid"></div>
           <div id="homeCalSum" class="cal-sum"></div>
         </div>
-        <div class="jcard dash-wide"><h3 class="dash-ct">Daily P&amp;L</h3><div class="dash-chart"><canvas id="homeDaily"></canvas></div></div>
-        <div class="jcard"><h3 class="dash-ct">Drawdown</h3><div class="dash-chart"><canvas id="homeDrawdown"></canvas></div></div>
-        <div class="jcard dash-wide"><h3 class="dash-ct">Trade-time performance <small style="color:var(--muted);font-weight:400">· P&amp;L by time of day</small></h3><div class="dash-chart"><canvas id="homeScatter"></canvas></div></div>
-        <div class="jcard dash-wide"><h3 class="dash-ct">Recent trades</h3><div id="homeTrades" class="dash-trades"></div></div>
+        <div class="jcard"><h3 class="dash-ct">Win / loss days</h3><div class="dash-chart"><canvas id="homeWinLoss"></canvas></div></div>
+
+        <div class="jcard sp3"><h3 class="dash-ct">Trade-time performance <small style="color:var(--muted);font-weight:400">· P&amp;L by time of day</small></h3><div class="dash-chart"><canvas id="homeScatter"></canvas></div></div>
       </div>
       <p class="modal-sub" id="homeEmpty" style="margin-top:10px"></p>
     </div>

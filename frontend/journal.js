@@ -254,15 +254,19 @@
     const pf = gl > 0 ? gp / gl : (gp > 0 ? Infinity : 0);
     const dayWin = (pdays + ldays) ? pdays / (pdays + ldays) * 100 : 0;
     const net = s.net_realized != null ? s.net_realized : (s.total_realized || 0);
+    const avgWin = pdays ? gp / pdays : 0, avgLoss = ldays ? gl / ldays : 0;
     const st = s.current_streak || {}; const stTxt = st.count ? `${st.count}${st.type === "profit" ? "🟢" : st.type === "loss" ? "🔴" : ""}` : "—";
-    const kpi = (label, val, cls, sub) => `<div class="kpi"><div class="kpi-l">${label}</div><div class="kpi-v ${cls || ""}">${val}</div>${sub ? `<div class="kpi-s">${sub}</div>` : ""}</div>`;
+    const gcol = (v) => v >= 55 ? "var(--put)" : v >= 40 ? "#f5a623" : "var(--call)";
+    const kcard = (l, v, cls, sub, viz) =>
+      `<div class="kpi${viz ? " khas" : ""}"><div class="kpi-main"><div class="kpi-l">${l}</div>` +
+      `<div class="kpi-v ${cls || ""}">${v}</div><div class="kpi-s">${sub}</div></div>${viz ? `<div class="kpi-g">${viz}</div>` : ""}</div>`;
     $("homeKpis").innerHTML =
-      kpi("Net P&L", signed(net), net >= 0 ? "pos" : "neg", s.total_costs ? "after ₹" + fmt(s.total_costs, 0) + " costs" : "gross") +
-      kpi("Win rate", (s.win_rate || 0) + "%", "", `${s.wins || 0}W · ${s.losses || 0}L`) +
-      kpi("Profit factor", pf === Infinity ? "∞" : fmt(pf, 2), pf >= 1 ? "pos" : "neg", "profit ÷ loss") +
-      kpi("Day win %", fmt(dayWin, 1) + "%", "", `${pdays}W · ${ldays}L days`) +
-      kpi("Avg / day", signed(s.net_avg_day != null ? s.net_avg_day : (s.avg_day || 0)), (s.net_avg_day || 0) >= 0 ? "pos" : "neg", `${s.trading_days || 0} days`) +
-      kpi("Total trades", String(s.total_trades || 0), "", `streak ${stTxt}`);
+      kcard("Net P&L", signed(net), net >= 0 ? "pos" : "neg", s.total_costs ? "after ₹" + fmt(s.total_costs, 0) + " costs" : "gross", "") +
+      kcard("Trade win %", (s.win_rate || 0) + "%", "", `${s.wins || 0}W · ${s.losses || 0}L`, gArc(s.win_rate || 0, gcol(s.win_rate || 0))) +
+      kcard("Profit factor", pf === Infinity ? "∞" : fmt(pf, 2), pf >= 1 ? "pos" : "neg", "profit ÷ loss", gDonut(gp, gl)) +
+      kcard("Day win %", fmt(dayWin, 1) + "%", "", `${pdays}W · ${ldays}L days`, gArc(dayWin, gcol(dayWin))) +
+      kcard("Avg win/loss", avgLoss > 0 ? fmt(avgWin / avgLoss, 2) : (avgWin > 0 ? "∞" : "—"), "", `${moneyShort(avgWin)} / ${moneyShort(avgLoss)}`, gBar(avgWin, avgLoss)) +
+      kcard("Total trades", String(s.total_trades || 0), "", `streak ${stTxt}`, "");
 
     if ($("homeEmpty")) $("homeEmpty").textContent = daily.length ? "" :
       "No trades yet — sync from Fyers/Dhan or add trades in the Journal, and your dashboard fills in automatically.";
@@ -282,7 +286,54 @@
     renderHomeTrades(d.recent_trades || []);
     drawRadar(s, daily, pf, dayWin);
     drawScatter(d.recent_trades || []);
+    drawHeatmap(daily);
     if ($("homeSyncBtn")) $("homeSyncBtn").style.display = d.can_sync ? "" : "none";
+  }
+  // KPI mini-gauges
+  function gArc(pct, color) {
+    pct = Math.max(0, Math.min(100, pct || 0));
+    const C = Math.PI * 26;
+    return `<svg viewBox="0 0 60 36" class="kg-arc"><path d="M4,30 A26,26 0 0 1 56,30" fill="none" stroke="var(--line)" stroke-width="6" stroke-linecap="round"/>` +
+      `<path d="M4,30 A26,26 0 0 1 56,30" fill="none" stroke="${color}" stroke-width="6" stroke-linecap="round" stroke-dasharray="${(C * pct / 100).toFixed(1)} ${C.toFixed(1)}"/>` +
+      `<text x="30" y="29" text-anchor="middle" class="kg-t">${Math.round(pct)}</text></svg>`;
+  }
+  function gDonut(green, red) {
+    const tot = green + red, gp = tot ? green / tot : 0, C = 2 * Math.PI * 13;
+    return `<svg viewBox="0 0 34 34" class="kg-d"><circle cx="17" cy="17" r="13" fill="none" stroke="var(--call)" stroke-width="5"/>` +
+      `<circle cx="17" cy="17" r="13" fill="none" stroke="var(--put)" stroke-width="5" stroke-dasharray="${(C * gp).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 17 17)"/></svg>`;
+  }
+  function gBar(green, red) {
+    const tot = green + red, gp = tot ? Math.round(green / tot * 100) : 50;
+    return `<div class="kg-bar"><span class="kb-g" style="width:${gp}%"></span><span class="kb-r" style="width:${100 - gp}%"></span></div>`;
+  }
+  function drawHeatmap(daily) {
+    const el = $("homeHeat"); if (!el) return;
+    if (!daily.length) { el.innerHTML = `<p class="modal-sub">No trades yet.</p>`; return; }
+    const pad = (n) => String(n).padStart(2, "0");
+    const byDate = {}; daily.forEach((x) => byDate[x.date] = (byDate[x.date] || 0) + (+x.realized || 0));
+    const dts = daily.map((x) => x.date).sort();
+    const maxAbs = Math.max(1, ...Object.values(byDate).map((v) => Math.abs(v)));
+    const start = new Date(dts[0] + "T00:00:00"); start.setDate(start.getDate() - start.getDay());
+    const end = new Date(dts[dts.length - 1] + "T00:00:00");
+    const weeks = []; let cur = new Date(start);
+    while (cur <= end) {
+      const col = [];
+      for (let i = 0; i < 7; i++) {
+        const ds = `${cur.getFullYear()}-${pad(cur.getMonth() + 1)}-${pad(cur.getDate())}`;
+        col.push({ ds, v: byDate[ds] });
+        cur.setDate(cur.getDate() + 1);
+      }
+      weeks.push(col);
+    }
+    let html = `<div class="heat" style="grid-template-columns:repeat(${weeks.length},1fr)">`;
+    for (let r = 0; r < 7; r++) for (let w = 0; w < weeks.length; w++) {
+      const c = weeks[w][r];
+      if (c.v == null) html += `<div class="hc" title="${c.ds}"></div>`;
+      else { const op = (0.35 + Math.min(1, Math.abs(c.v) / maxAbs) * 0.65).toFixed(2);
+        html += `<div class="hc ${c.v >= 0 ? "g" : "r"}" style="opacity:${op}" title="${c.ds}: ₹${fmt(c.v, 0)}"></div>`; }
+    }
+    html += `</div><div class="heat-leg"><span>Loss</span><i class="r"></i><i></i><i class="g"></i><span>Profit</span></div>`;
+    el.innerHTML = html;
   }
   const _clamp = (v) => Math.max(0, Math.min(100, v));
   function drawRadar(s, daily, pf, dayWin) {
@@ -407,7 +458,7 @@
       : `<span class="modal-sub">No trades this month</span>`;
   }
   function renderHomeTrades(trades) {
-    const rows = (trades || []).filter((t) => t.pnl != null && t.date !== "unknown").slice(0, 10);
+    const rows = (trades || []).filter((t) => t.pnl != null && t.date !== "unknown").slice(0, 7);
     if (!rows.length) { $("homeTrades").innerHTML = `<p class="modal-sub">No closed trades in this period yet.</p>`; return; }
     $("homeTrades").innerHTML =
       `<table class="dash-tt"><thead><tr><th>Date</th><th>Symbol</th><th>Side</th><th class="r">Qty</th><th class="r">P&L</th></tr></thead><tbody>` +
