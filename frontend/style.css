@@ -96,6 +96,11 @@ body {
 .statusbar.error { background: #3a1d1d; color: #ff8a80; border-color: #5a2424; }
 .statusbar.info { background: #122338; color: #8fb8ef; border-color: #1d3b5c; }
 .hidden { display: none !important; }
+body.needs-login main,
+body.needs-login #jSub,
+body.needs-login #tickerBar,
+body.needs-login .hsearch,
+body.needs-login #oiControls { display: none !important; }
 
 main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max-width: 1400px; margin: 0 auto; }
 

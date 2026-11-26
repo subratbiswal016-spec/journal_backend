@@ -6,8 +6,10 @@ const fmt = (n, d = 0) =>
 const fmtSigned = (n) => (n > 0 ? "+" : "") + fmt(n);
 
 let CFG = { symbols: ["NIFTY"], refresh_seconds: 30, source: "nse" };
-let state = { symbol: "NIFTY", expiry: "", countdown: 30, timer: null, loading: false,
-              marketClosed: false };
+let state = {
+  symbol: "NIFTY", expiry: "", countdown: 30, timer: null, loading: false,
+  marketClosed: false
+};
 let chgChart = null;
 let oiChart = null;
 
@@ -50,10 +52,11 @@ function countdownLabel() {
 }
 
 // ---------------------------------------------------------------- bootstrap
+const _cfgPromise = fetch("/api/config").then((r) => r.json()).catch(() => CFG);
+window.__authReady = _cfgPromise.then((c) => !c.needs_login).catch(() => true);
+
 async function init() {
-  try {
-    CFG = await (await fetch("/api/config")).json();
-  } catch (e) { /* use defaults */ }
+  CFG = await _cfgPromise;
 
   $("sourceBadge").textContent = CFG.source.toUpperCase();
   const SRC = {
@@ -177,13 +180,13 @@ function handleLoginRedirect() {
 }
 
 function showLogin() {
+  document.body.classList.add("needs-login");
   $("loginBox").classList.remove("hidden");
-  document.querySelector("main").style.display = "none";
   if (state.timer) { clearInterval(state.timer); state.timer = null; }
 }
 function hideLogin() {
+  document.body.classList.remove("needs-login");
   $("loginBox").classList.add("hidden");
-  document.querySelector("main").style.display = "";
 }
 
 // ---------------------------------------------------------------- data load
@@ -419,7 +422,7 @@ function showStatus(msg, cls) {
   setIcon();
   btn.addEventListener("click", () => {
     const light = document.documentElement.classList.toggle("light");
-    try { localStorage.setItem("oi-theme", light ? "light" : "dark"); } catch (e) {}
+    try { localStorage.setItem("oi-theme", light ? "light" : "dark"); } catch (e) { }
     setIcon();
   });
 })();

@@ -66,10 +66,11 @@
     else { document.body.classList.add("sb-collapsed"); sbNudge(); }
   });
   if ($("sbBackdrop")) $("sbBackdrop").addEventListener("click", () => document.body.classList.remove("sb-open"));
-  refreshIpoBadge();   // show the IPO notification badge from any screen
+  (window.__authReady || Promise.resolve(true)).then((ok) => { if (ok) refreshIpoBadge(); });
 
   let journalSub = "journal";          // "journal" | "capital" — sub-tab inside Journal
   function switchView(view) {
+    if (document.body.classList.contains("needs-login")) return;
     document.body.classList.remove("sb-open");   // close the mobile sidebar on nav
     document.querySelectorAll(".tab").forEach((b) =>
       b.classList.toggle("active", b.dataset.view === view));
@@ -2612,6 +2613,8 @@
     } catch (e) { rulesSaveMsg("Save failed: " + e.message, true); }
   }
 
-  // Land on the analytics Dashboard (runs last, after all declarations exist).
-  switchView("home");
+  // Land on the analytics Dashboard once auth status allows (runs last, after all declarations exist).
+  (window.__authReady || Promise.resolve(true)).then((ok) => {
+    if (ok) switchView("home");
+  });
 })();
