@@ -97,10 +97,79 @@ async function init() {
     showLogin();
     return; // wait for the user to log in before polling
   }
+  loadProfile();
   await load(true);
   startTick();
   initTicker();
 }
+
+// ------------------------------------------------------------ user profile
+const _USER_SVG = '<svg viewBox="0 0 24 24"><path d="M12 12a4.5 4.5 0 1 0-4.5-4.5A4.5 4.5 0 0 0 12 12Zm0 2.25c-3.9 0-7.5 1.95-7.5 4.5V20h15v-1.25c0-2.55-3.6-4.5-7.5-4.5Z"/></svg>';
+function _initials(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+function _fillAvatar(el, avatarUrl, name) {
+  if (!el) return;
+  el.textContent = "";
+  if (avatarUrl) {
+    const img = document.createElement("img");
+    img.src = avatarUrl;
+    img.alt = "";
+    img.onerror = () => {
+      el.textContent = _initials(name) || "";
+      if (!el.textContent) el.innerHTML = _USER_SVG;
+    };
+    el.appendChild(img);
+    return;
+  }
+  const ini = _initials(name);
+  if (ini) el.textContent = ini;
+  else el.innerHTML = _USER_SVG;
+}
+async function loadProfile() {
+  const wrap = $("profileWrap");
+  if (!wrap) return;
+  try {
+    const d = await (await fetch("/api/profile")).json();
+    if (!d.logged_in) { wrap.classList.add("hidden"); return; }
+    const name = d.name || (d.source ? d.source.toUpperCase() + " Trader" : "Trader");
+    if ($("profileName")) $("profileName").textContent = name;
+    if ($("profileFullName")) $("profileFullName").textContent = name;
+    const subBits = [d.broker || (d.source || "").toUpperCase(), d.user_id, d.email].filter(Boolean);
+    if ($("profileSub")) $("profileSub").textContent = subBits.join(" · ");
+    _fillAvatar($("profileAvatar"), d.avatar, name);
+    _fillAvatar($("profileAvatarLg"), d.avatar, name);
+    const canAuth = d.source === "fyers" || d.source === "upstox";
+    if ($("profileReconnect")) $("profileReconnect").classList.toggle("hidden", !canAuth);
+    if ($("logoutBtn")) $("logoutBtn").classList.toggle("hidden", !canAuth);
+    const acts = wrap.querySelector(".prof-actions");
+    if (acts) acts.classList.toggle("hidden", !canAuth);
+    wrap.classList.remove("hidden");
+  } catch (e) { /* keep hidden on error */ }
+}
+(function initProfileMenu() {
+  const btn = $("profileBtn"), menu = $("profileMenu"), logout = $("logoutBtn");
+  if (btn && menu) {
+    btn.addEventListener("click", (e) => { e.stopPropagation(); menu.classList.toggle("hidden"); });
+    document.addEventListener("click", (e) => {
+      if (!menu.classList.contains("hidden") && !e.target.closest("#profileWrap")) menu.classList.add("hidden");
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") menu.classList.add("hidden"); });
+  }
+  if (logout) {
+    logout.addEventListener("click", async () => {
+      logout.disabled = true;
+      try { await fetch("/api/auth/logout", { method: "POST" }); } catch (e) {}
+      if (menu) menu.classList.add("hidden");
+      if ($("profileWrap")) $("profileWrap").classList.add("hidden");
+      logout.disabled = false;
+      showLogin();
+    });
+  }
+})();
 
 // ------------------------------------------------------------ ticker tape
 let tickerPaused = false;

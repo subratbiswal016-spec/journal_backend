@@ -167,6 +167,8 @@ class FyersDataSource(DataSource):
         # per-symbol futures cache (slow-moving) -> {"at": ts, "rows": [...]}
         self._fut_cache: dict[str, dict] = {}
         self._fut_fetching: set[str] = set()   # symbols being refreshed in bg
+        self._profile: Optional[dict] = None
+        self._profile_token: Optional[str] = None
         self._load_token()
 
     # ----------------------------------------------------------------- token
@@ -233,7 +235,39 @@ class FyersDataSource(DataSource):
         token = resp.get("access_token") if isinstance(resp, dict) else None
         if not token:
             raise AuthRequired(f"Fyers token exchange failed: {resp}")
+        self._profile = None
+        self._profile_token = None
         self._save_token(token)
+
+    def logout(self) -> None:
+        self._token = None
+        self._token_date = None
+        self._profile = None
+        self._profile_token = None
+        try:
+            _TOKEN_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    def get_profile(self) -> Optional[dict]:
+        if not self._token_valid():
+            raise AuthRequired("No valid Fyers access token — please log in.")
+        if self._profile and self._profile_token == self._token:
+            return self._profile
+        _rate_limit()
+        resp = self._check(self._model().get_profile())
+        d = resp.get("data") or {}
+        name = (d.get("name") or d.get("display_name") or d.get("fy_id") or "Fyers Trader").strip()
+        prof = {
+            "name": name,
+            "user_id": (d.get("fy_id") or "").strip(),
+            "email": (d.get("email_id") or "").strip(),
+            "avatar": (d.get("image") or "").strip(),
+            "broker": "Fyers",
+        }
+        self._profile = prof
+        self._profile_token = self._token
+        return prof
 
     # ------------------------------------------------------------------ model
     def _model(self):

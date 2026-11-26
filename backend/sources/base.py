@@ -93,3 +93,9 @@ class DataSource:
 
     def exchange_code(self, code: str) -> None:
         raise NotImplementedError
+
+    def get_profile(self) -> Optional[dict]:
+        return None
+
+    def logout(self) -> None:
+        pass

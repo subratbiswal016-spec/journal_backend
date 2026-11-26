@@ -88,6 +88,8 @@ class UpstoxDataSource(DataSource):
         self._token_date: Optional[str] = None  # IST date the token was issued
         self._fut_index: Optional[dict] = None   # underlying -> [(expiry_ms, key, tsym)]
         self._fut_index_date: Optional[str] = None
+        self._profile: Optional[dict] = None
+        self._profile_token: Optional[str] = None
         self._load_token()
 
     # ----------------------------------------------------------------- token
@@ -164,7 +166,37 @@ class UpstoxDataSource(DataSource):
         token = body.get("access_token")
         if not token:
             raise AuthRequired(f"Upstox token exchange failed: {body}")
+        self._profile = None
+        self._profile_token = None
         self._save_token(token)
+
+    def logout(self) -> None:
+        self._token = None
+        self._token_date = None
+        self._profile = None
+        self._profile_token = None
+        try:
+            _TOKEN_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    def get_profile(self) -> Optional[dict]:
+        if not self._token_valid():
+            raise AuthRequired("No valid Upstox access token — please log in.")
+        if self._profile and self._profile_token == self._token:
+            return self._profile
+        body = self._get(API + "/user/profile", {})
+        d = body.get("data") or {}
+        prof = {
+            "name": (d.get("user_name") or d.get("user_id") or "Upstox Trader").strip(),
+            "user_id": (d.get("user_id") or "").strip(),
+            "email": (d.get("email") or "").strip(),
+            "avatar": "",
+            "broker": "Upstox",
+        }
+        self._profile = prof
+        self._profile_token = self._token
+        return prof
 
     # ------------------------------------------------------------------ http
     def _auth_headers(self) -> dict:

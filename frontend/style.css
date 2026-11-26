@@ -152,7 +152,8 @@ body.needs-login main,
 body.needs-login #jSub,
 body.needs-login #tickerBar,
 body.needs-login .hsearch,
-body.needs-login #oiControls { display: none !important; }
+body.needs-login #oiControls,
+body.needs-login #profileWrap { display: none !important; }
 
 main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max-width: 1400px; margin: 0 auto; }
 
@@ -248,8 +249,42 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .scr-clear:hover { background: rgba(239,83,80,.1); }
 #screenerTable td:last-child .sig { margin: 1px 2px 1px 0; }
 
-/* --- header stock search --- */
-.hsearch { position: relative; margin-left: auto; display: flex; align-items: center; }
+/* --- header stock search & right controls / profile --- */
+.hsearch { position: relative; display: flex; align-items: center; }
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.profile-wrap { position: relative; }
+.prof-btn {
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+  padding: 4px 11px 4px 4px; border-radius: 999px;
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+  font-size: 13px; font-weight: 600; transition: border-color .15s;
+}
+.prof-btn:hover { border-color: var(--accent); }
+.prof-avatar {
+  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+  background: var(--brand); color: #fff; font-size: 11px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center; overflow: hidden;
+  letter-spacing: .3px;
+}
+.prof-avatar.lg { width: 38px; height: 38px; font-size: 14px; }
+.prof-avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.prof-avatar svg { width: 16px; height: 16px; fill: currentColor; }
+.prof-avatar.lg svg { width: 20px; height: 20px; }
+.prof-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prof-caret { font-size: 10px; opacity: .7; }
+.prof-menu {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 80; min-width: 240px;
+  max-width: calc(100vw - 24px); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 12px; padding: 12px; box-shadow: 0 16px 40px rgba(0,0,0,.4);
+}
+:is(.light, .sand) .prof-menu { box-shadow: 0 12px 30px rgba(0,0,0,.14); }
+.prof-head { display: flex; align-items: center; gap: 10px; }
+.prof-meta { min-width: 0; }
+.prof-fullname { font-size: 14px; font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prof-sub { font-size: 11.5px; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prof-actions { display: flex; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.prof-actions:empty, .prof-actions.hidden { display: none; }
+.prof-act { flex: 1; text-align: center; text-decoration: none; font-size: 12px; padding: 7px 10px; }
 .hs-decoy { position: absolute; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .hs-icon { position: absolute; left: 12px; font-size: 13px; opacity: .65; pointer-events: none; }
 .hsearch input#stockSearch { width: 250px; max-width: 46vw; padding: 9px 14px 9px 34px; font-size: 13px;

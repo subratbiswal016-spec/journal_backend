@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Option OI Dashboard</title>
   <script>try{var t=localStorage.getItem('oi-theme');if(t==='light'||t==='emerald'||t==='sand')document.documentElement.classList.add(t);}catch(e){}</script>
-  <link rel="stylesheet" href="style.css?v=49" />
+  <link rel="stylesheet" href="style.css?v=50" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
-  <script src="app.js?v=12" defer></script>
+  <script src="app.js?v=13" defer></script>
   <script src="journal.js?v=51" defer></script>
 </head>
 <body>
@@ -50,19 +50,41 @@
              readonly onfocus="setTimeout(()=>this.removeAttribute('readonly'),60)" />
       <div id="stockSearchResults" class="hsearch-results hidden"></div>
     </div>
-    <div class="controls" id="oiControls">
-      <label>Index
-        <select id="symbol"></select>
-      </label>
-      <label>Expiry
-        <select id="expiry"></select>
-      </label>
-      <label class="switch">
-        <input type="checkbox" id="autoRefresh" checked />
-        <span>Auto</span>
-      </label>
-      <span id="oiCountdown" class="scr-countdown" title="Next auto-refresh">⏱ --</span>
-      <button id="refreshBtn" class="jbtn primary" title="Refresh now">⟳ Refresh</button>
+    <div class="topbar-right">
+      <div class="controls" id="oiControls">
+        <label>Index
+          <select id="symbol"></select>
+        </label>
+        <label>Expiry
+          <select id="expiry"></select>
+        </label>
+        <label class="switch">
+          <input type="checkbox" id="autoRefresh" checked />
+          <span>Auto</span>
+        </label>
+        <span id="oiCountdown" class="scr-countdown" title="Next auto-refresh">⏱ --</span>
+        <button id="refreshBtn" class="jbtn primary" title="Refresh now">⟳ Refresh</button>
+      </div>
+      <div class="profile-wrap hidden" id="profileWrap">
+        <button id="profileBtn" class="prof-btn" type="button" title="Account profile">
+          <span class="prof-avatar" id="profileAvatar" aria-hidden="true"></span>
+          <span class="prof-name" id="profileName">Account</span>
+          <span class="prof-caret">▾</span>
+        </button>
+        <div id="profileMenu" class="prof-menu hidden">
+          <div class="prof-head">
+            <span class="prof-avatar lg" id="profileAvatarLg" aria-hidden="true"></span>
+            <div class="prof-meta">
+              <div class="prof-fullname" id="profileFullName">—</div>
+              <div class="prof-sub" id="profileSub">—</div>
+            </div>
+          </div>
+          <div class="prof-actions">
+            <a id="profileReconnect" class="jbtn prof-act hidden" href="/auth/login">🔄 Reconnect</a>
+            <button id="logoutBtn" class="jbtn danger prof-act hidden" type="button">🚪 Log out</button>
+          </div>
+        </div>
+      </div>
     </div>
   </header>
 

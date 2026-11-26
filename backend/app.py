@@ -199,6 +199,29 @@ def auth_callback(code: Optional[str] = None, auth_code: Optional[str] = None,
     return RedirectResponse("/?login=ok")
 
 
+@app.get("/api/profile")
+def api_profile():
+    """Return the logged-in broker user's profile (name, id, email, avatar)."""
+    if _source.needs_login():
+        return {"logged_in": False, "source": _source.name}
+    try:
+        prof = _source.get_profile()
+    except AuthRequired:
+        return {"logged_in": False, "source": _source.name}
+    except Exception:  # noqa: BLE001 - best-effort profile metadata
+        prof = {"name": _source.name.upper() + " Trader", "user_id": "", "email": "", "avatar": "", "broker": _source.name.upper()}
+    return {"logged_in": True, "source": _source.name, **(prof or {})}
+
+
+@app.post("/api/auth/logout")
+def api_auth_logout():
+    """Clear the cached broker token so the user can sign out / switch accounts."""
+    _source.logout()
+    with _lock:
+        _cache.clear()
+    return {"ok": True}
+
+
 @app.get("/api/snapshot")
 def api_snapshot(
     symbol: str = Query("NIFTY"),
