@@ -978,10 +978,12 @@
       (sig ? `<span class="sig ${scls}">${esc(sig)}</span>` : "") +
       `</div></div>`;
 
-    // One continuous detail view: technicals, then fundamentals.
-    html += techTabHtml(t, scls);
-    html += `<div class="ana-div">💰 Fundamentals</div>`;
-    html += s.fundLoading ? `<p class="modal-sub">Loading fundamentals…</p>` : fundTabHtml(f, s.sym);
+    // Two columns: technicals on the left, fundamentals on the right.
+    html += `<div class="ana-cols">`;
+    html += `<div class="ana-col"><div class="ana-colh">📊 Technicals</div>` + techTabHtml(t, scls) + `</div>`;
+    html += `<div class="ana-col"><div class="ana-colh">💰 Fundamentals</div>` +
+      (s.fundLoading ? `<p class="modal-sub">Loading fundamentals…</p>` : fundTabHtml(f, s.sym)) + `</div>`;
+    html += `</div>`;
 
     $("anaBody").innerHTML = html;
     if (t.ok && t.chart && (t.chart.price || []).length > 1) drawAnaChart(t.chart, scls);

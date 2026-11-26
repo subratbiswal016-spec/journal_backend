@@ -298,6 +298,16 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .ana-src { font-size: 11px; color: var(--muted); margin: 12px 0 0; }
 .ana-div { font-size: 14px; font-weight: 700; margin: 20px 0 4px; padding-top: 14px;
   border-top: 2px solid var(--line); color: var(--text); }
+/* wider two-column analysis popup */
+#analyzeModal .modal-card { max-width: 900px; }
+.ana-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+.ana-col { min-width: 0; }
+.ana-colh { font-size: 14px; font-weight: 700; margin: 0 0 12px; padding-bottom: 8px; border-bottom: 2px solid var(--line); }
+.ana-col .ana-sect:first-of-type, .ana-col .ana-setup:first-child { margin-top: 0; }
+@media (max-width: 720px) {
+  #analyzeModal .modal-card { max-width: 460px; }
+  .ana-cols { grid-template-columns: 1fr; gap: 6px; }
+}
 /* fundamentals: pros & cons + full-report button */
 .ana-pc { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; margin: 12px 0; }
 .ana-pch { font-size: 12px; font-weight: 700; margin-bottom: 4px; }
