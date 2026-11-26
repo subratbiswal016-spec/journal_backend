@@ -124,13 +124,17 @@
       if ($("ipoBody")) $("ipoBody").innerHTML = `<p class="jnote err">Could not load IPOs: ${esc(e.message)}</p>`;
     }
   }
-  function ipoCard(x) {
+  function ipoSubTxt(x) {
+    return (x.sub != null && x.sub !== "" && !isNaN(x.sub)) ? (+x.sub).toFixed(2) + "×" : null;
+  }
+  function ipoCard(x, i) {
     const seg = x.segment === "SME" ? `<span class="ipo-seg sme">SME</span>` : `<span class="ipo-seg mb">Mainboard</span>`;
-    const sub = (x.sub != null && x.sub !== "" && !isNaN(x.sub)) ? `<span class="ipo-sub">${x.sub}× subscribed</span>` : "";
+    const st = ipoSubTxt(x);
+    const sub = st ? `<span class="ipo-sub">${st} subscribed</span>` : "";
     const dates = [x.open_date, x.close_date].filter(Boolean).join(" → ");
     const flag = x.opens_today ? `<span class="ipo-flag today">🟢 Opens today</span>`
       : x.closes_today ? `<span class="ipo-flag last">⏰ Last day today</span>` : "";
-    return `<div class="ipo-card${x.opens_today ? " hl" : ""}">` +
+    return `<div class="ipo-card${x.opens_today ? " hl" : ""}" data-ii="${i}" title="Click for details">` +
       `<div class="ipo-top"><b class="ipo-name">${esc(x.name)}</b>${seg}</div>` +
       (flag ? `<div class="ipo-flags">${flag}</div>` : "") +
       `<div class="ipo-meta">` +
@@ -139,10 +143,49 @@
       (x.symbol ? `<span>🔖 ${esc(x.symbol)}</span>` : "") +
       sub + `</div></div>`;
   }
+  let ipoAll = [];
+  let ipoClickBound = false;
+  function bindIpoClicks() {
+    if (ipoClickBound) return; ipoClickBound = true;
+    if ($("ipoBody")) $("ipoBody").addEventListener("click", (e) => {
+      const card = e.target.closest(".ipo-card[data-ii]");
+      if (card) openIpoModal(+card.dataset.ii);
+    });
+    if ($("ipoModalClose")) $("ipoModalClose").addEventListener("click", closeIpoModal);
+    if ($("ipoModal")) $("ipoModal").addEventListener("click", (e) => { if (e.target === $("ipoModal")) closeIpoModal(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $("ipoModal") && !$("ipoModal").classList.contains("hidden")) closeIpoModal(); });
+  }
+  function closeIpoModal() { if ($("ipoModal")) $("ipoModal").classList.add("hidden"); }
+  function openIpoModal(i) {
+    const x = ipoAll[i]; if (!x) return;
+    $("ipoModalTitle").textContent = x.name || x.symbol || "IPO";
+    const row = (k, v, cls) => v != null && v !== "" ? `<div class="ana-row"><span>${k}</span><b class="${cls || ""}">${v}</b></div>` : "";
+    const seg = x.segment === "SME" ? `<span class="ipo-seg sme">SME</span>` : `<span class="ipo-seg mb">Mainboard</span>`;
+    const flag = x.opens_today ? `<span class="ipo-flag today">🟢 Opens today</span>`
+      : x.closes_today ? `<span class="ipo-flag last">⏰ Last day today</span>` : "";
+    const st = ipoSubTxt(x);
+    let html = `<div class="ipo-mhead">${seg}<span class="ipo-mstatus">${esc(x.status || "")}</span>${flag}</div>`;
+    html += `<div class="ana-grid">` +
+      row("Symbol", esc(x.symbol || "—")) +
+      row("Segment", esc(x.segment || "—")) +
+      row("Price band", esc(x.price_band || "—")) +
+      row("Opens", esc(x.open_date || "—")) +
+      row("Closes", esc(x.close_date || "—")) +
+      row("Subscription", st, (x.sub >= 1 ? "pos" : "")) +
+      row("Issue size", x.issue_size ? Number(x.issue_size).toLocaleString("en-IN") + " shares" : "—") +
+      `</div>`;
+    const url = "https://www.nseindia.com/market-data/all-upcoming-issues-ipo";
+    html += `<a class="ana-report" href="${url}" target="_blank" rel="noopener noreferrer">📋 Full details, GMP &amp; lot size on NSE ↗</a>`;
+    html += `<p class="ana-src">Data from NSE. Dates/price band as published — <b>not an offer or advice</b> to apply.</p>`;
+    $("ipoModalBody").innerHTML = html;
+    $("ipoModal").classList.remove("hidden");
+  }
   function renderIpos(d) {
+    bindIpoClicks();
     if ($("ipoUpdated")) $("ipoUpdated").textContent = d.updated ? "Updated " + d.updated : "";
     const open = d.open || [], up = d.upcoming || [];
     const all = open.concat(up);
+    ipoAll = all;                           // for the detail popup (index into this)
     const todays = all.filter((x) => x.opens_today);
     const closing = open.filter((x) => x.closes_today);
     let html = "";
@@ -156,10 +199,10 @@
       html += `<div class="ipo-banner">🔔 ${bits.join(" · ")}</div>`;
     }
     html += `<div class="ipo-sect">🟢 Open now <span class="ipo-count">${open.length}</span></div>`;
-    html += open.length ? `<div class="ipo-grid">${open.map(ipoCard).join("")}</div>`
+    html += open.length ? `<div class="ipo-grid">${open.map((x, i) => ipoCard(x, i)).join("")}</div>`
                         : `<p class="modal-sub">No IPOs open for subscription right now.</p>`;
     html += `<div class="ipo-sect">🔜 Upcoming <span class="ipo-count">${up.length}</span></div>`;
-    html += up.length ? `<div class="ipo-grid">${up.map(ipoCard).join("")}</div>`
+    html += up.length ? `<div class="ipo-grid">${up.map((x, i) => ipoCard(x, open.length + i)).join("")}</div>`
                       : `<p class="modal-sub">No upcoming IPOs announced yet.</p>`;
     if (d.url) html += `<a class="ana-report" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">📋 Full IPO details on NSE ↗</a>`;
     $("ipoBody").innerHTML = html;
@@ -275,6 +318,7 @@
     daily.forEach((x) => { cum += (+x.realized || 0); labels.push(x.date); equity.push(round2(cum)); peak = Math.max(peak, cum); dd.push(round2(cum - peak)); });
     drawHomeLine("homeEquity", labels, equity, "equity");
     drawHomeLine("homeDrawdown", labels, dd, "dd");
+    drawBalance(labels, equity, s.opening_capital || 0);
     drawHomeBars("homeDaily", daily);
     drawWinLoss("homeWinLoss", pdays, ldays);
 
@@ -399,6 +443,19 @@
     homeCharts[id] = new Chart(el, { type: "line",
       data: { labels, datasets: [{ data, borderColor: color, backgroundColor: color + "22", borderWidth: 2, pointRadius: 0, fill: true, tension: .2 }] },
       options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (x) => "₹" + fmt(x.parsed.y, 0) } } },
+        scales: { x: { grid: { display: false }, ticks: { color: c.tick, maxTicksLimit: 6, font: { size: 10 } } }, y: { grid: { color: c.grid }, ticks: { color: c.tick, font: { size: 10 }, callback: (v) => moneyShort(v) } } } } });
+  }
+  function drawBalance(labels, equity, opening) {
+    const el = $("homeBalance"); if (!el || typeof Chart === "undefined") return;
+    if (homeCharts.homeBalance) homeCharts.homeBalance.destroy();
+    const c = homeColors();
+    const bal = equity.map((v) => round2(opening + v));
+    const up = bal.length ? bal[bal.length - 1] >= (opening || bal[0]) : true;
+    const col = up ? c.put : c.call;
+    const ds = [{ label: "Balance", data: bal, borderColor: col, backgroundColor: col + "22", borderWidth: 2, pointRadius: 0, fill: true, tension: .2 }];
+    if (opening) ds.push({ label: "Opening capital", data: labels.map(() => opening), borderColor: c.tick, borderWidth: 1, borderDash: [4, 4], pointRadius: 0, fill: false });
+    homeCharts.homeBalance = new Chart(el, { type: "line", data: { labels, datasets: ds },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: opening > 0, labels: { color: c.tick, boxWidth: 12, font: { size: 10 } } }, tooltip: { callbacks: { label: (x) => x.dataset.label + ": ₹" + fmt(x.parsed.y, 0) } } },
         scales: { x: { grid: { display: false }, ticks: { color: c.tick, maxTicksLimit: 6, font: { size: 10 } } }, y: { grid: { color: c.grid }, ticks: { color: c.tick, font: { size: 10 }, callback: (v) => moneyShort(v) } } } } });
   }
   function drawHomeBars(id, daily) {
