@@ -49,7 +49,10 @@ _RL_LOCK = threading.Lock()
 _RL_CALLS: "collections.deque[float]" = collections.deque()
 _RL_LAST = 0.0
 _RL_MIN_GAP = 0.25  # min seconds between any two calls → ≤4/sec (hard cap)
-_RL_PER_MIN = 45    # headroom under 50/min
+_RL_PER_MIN = 45    # hard cap for everyone (headroom under 50/min)
+_RL_BG_LIMIT = 34   # background work (scanner/ticker/warm/futures) stops here,
+                    # reserving ~11/min so user-facing calls (dashboard option
+                    # chain, stock analysis) never queue behind the scanner
 _RL_DAY_COUNT = 0   # every Fyers call made today (dashboard + screener + history)
 _RL_DAY = ""        # IST date the counter belongs to
 
@@ -67,17 +70,20 @@ def calls_today() -> int:
         return _RL_DAY_COUNT
 
 
-def _rate_limit():
+def _rate_limit(background: bool = False):
     """Block until a call fits under BOTH the min-spacing (≤4/sec) and the
-    per-minute cap (≤45/min). Also counts the call toward the daily total."""
+    per-minute cap. Also counts the call toward the daily total. Background
+    callers stop at a lower cap so foreground (user-facing) calls keep headroom
+    and don't wait behind the scanner."""
     global _RL_LAST, _RL_DAY_COUNT, _RL_DAY
+    cap = _RL_BG_LIMIT if background else _RL_PER_MIN
     while True:
         with _RL_LOCK:
             now = time.monotonic()
             while _RL_CALLS and now - _RL_CALLS[0] > 60.0:
                 _RL_CALLS.popleft()
             gap_ok = (now - _RL_LAST) >= _RL_MIN_GAP
-            min_ok = len(_RL_CALLS) < _RL_PER_MIN
+            min_ok = len(_RL_CALLS) < cap
             if gap_ok and min_ok:
                 _RL_LAST = now
                 _RL_CALLS.append(now)
@@ -160,6 +166,7 @@ class FyersDataSource(DataSource):
         self._expiry_map_date: Optional[str] = None
         # per-symbol futures cache (slow-moving) -> {"at": ts, "rows": [...]}
         self._fut_cache: dict[str, dict] = {}
+        self._fut_fetching: set[str] = set()   # symbols being refreshed in bg
         self._load_token()
 
     # ----------------------------------------------------------------- token
@@ -271,7 +278,7 @@ class FyersDataSource(DataSource):
         """One rate-limited depth quote for any Fyers symbol (equity or index).
         Returns normalized {ltp, open, high, low, prev_close, volume} or None."""
         fy = self._model()        # raises AuthRequired if the token is invalid
-        _rate_limit()             # respect 5/sec + 50/min + daily caps
+        _rate_limit(background=True)   # scanner/ticker — yield to the dashboard
         resp = fy.depth(data={"symbol": full_symbol, "ohlcv_flag": 1})
         if not isinstance(resp, dict):
             return None
@@ -335,13 +342,16 @@ class FyersDataSource(DataSource):
                                "(check the Fyers token / data permissions).")
         return out
 
-    def fetch_history(self, ticker: str, resolution: str = "D", days: int = 120) -> list[list]:
+    def fetch_history(self, ticker: str, resolution: str = "D", days: int = 120,
+                      background: bool = False) -> list[list]:
         """Candles [ts,o,h,l,c,v] for an NSE equity. resolution 'D' (daily) or a
-        minute string like '5' (5-min). `days` is the lookback window."""
+        minute string like '5' (5-min). `days` is the lookback window.
+        `background=True` yields to user-facing calls (used by the screener's
+        level warm-up); the stock-analysis popup leaves it False for priority."""
         fy = self._model()
         end = _ist_now().date()
         start = end - timedelta(days=days)
-        _rate_limit()   # share the account's 5 req/sec budget
+        _rate_limit(background=background)
         resp = self._check(fy.history(data={
             "symbol": f"NSE:{ticker}-EQ", "resolution": resolution, "date_format": "1",
             "range_from": start.isoformat(), "range_to": end.isoformat(),
@@ -440,31 +450,45 @@ class FyersDataSource(DataSource):
         return out
 
     def _fetch_futures(self, symbol: str, fy) -> list[FuturesRow]:
-        # Futures OI moves slowly and is secondary to the option chain — serve a
-        # short cache so the Dashboard refresh does not spend 2 extra Fyers calls
-        # (per symbol) on every poll. Big win against the 50/min rate limit.
+        # Futures OI moves slowly and is secondary to the option chain. Serve the
+        # cache immediately and refresh in the BACKGROUND so the option-chain
+        # response (e.g. when the user switches index) never waits on 2 extra
+        # depth calls. First view of a symbol shows no futures; the next poll has
+        # them. Also a big saving against the rate limit.
         cached = self._fut_cache.get(symbol)
         if cached and time.time() - cached["at"] < 45:
             return cached["rows"]
-        out: list[FuturesRow] = []
-        for sym in self._monthly_fut_symbols(symbol):
-            try:
-                _rate_limit()     # respect 5/sec + 50/min + daily caps
-                resp = fy.depth(data={"symbol": sym, "ohlcv_flag": 1})
-                if not isinstance(resp, dict) or resp.get("s") == "error":
-                    continue
-                d = (resp.get("d") or {}).get(sym) or {}
-                oi = float(d.get("oi", 0) or 0)
-                if oi <= 0:
-                    continue
-                out.append(FuturesRow(
-                    expiry=_fmt_epoch(d.get("expiry")) or sym.split(":")[-1].replace("FUT", " FUT"),
-                    last_price=float(d.get("ltp", 0) or 0),
-                    oi=oi,
-                    chg_oi=oi - float(d.get("pdoi", 0) or 0),
-                    volume=0.0,
-                ))
-            except Exception:
-                continue  # futures are best-effort
-        self._fut_cache[symbol] = {"at": time.time(), "rows": out}
-        return out
+        if symbol not in self._fut_fetching:
+            self._fut_fetching.add(symbol)
+            threading.Thread(target=self._refresh_futures_bg, args=(symbol,),
+                             daemon=True, name=f"fut-{symbol}").start()
+        return cached["rows"] if cached else []
+
+    def _refresh_futures_bg(self, symbol: str) -> None:
+        try:
+            fy = self._model()
+            out: list[FuturesRow] = []
+            for sym in self._monthly_fut_symbols(symbol):
+                try:
+                    _rate_limit(background=True)   # yield to the dashboard
+                    resp = fy.depth(data={"symbol": sym, "ohlcv_flag": 1})
+                    if not isinstance(resp, dict) or resp.get("s") == "error":
+                        continue
+                    d = (resp.get("d") or {}).get(sym) or {}
+                    oi = float(d.get("oi", 0) or 0)
+                    if oi <= 0:
+                        continue
+                    out.append(FuturesRow(
+                        expiry=_fmt_epoch(d.get("expiry")) or sym.split(":")[-1].replace("FUT", " FUT"),
+                        last_price=float(d.get("ltp", 0) or 0),
+                        oi=oi,
+                        chg_oi=oi - float(d.get("pdoi", 0) or 0),
+                        volume=0.0,
+                    ))
+                except Exception:  # noqa: BLE001
+                    continue  # futures are best-effort
+            self._fut_cache[symbol] = {"at": time.time(), "rows": out}
+        except Exception:  # noqa: BLE001 - never let the bg thread crash
+            pass
+        finally:
+            self._fut_fetching.discard(symbol)

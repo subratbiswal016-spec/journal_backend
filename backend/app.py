@@ -357,7 +357,8 @@ def _warm_hist_async(symbols: list[str], today: str):
     def run():
         for s in symbols:
             try:
-                candles = _source.fetch_history(s, resolution="D", days=365)
+                candles = _source.fetch_history(s, resolution="D", days=365,
+                                                background=True)
                 lv = screener.levels_from_history(candles)
             except Exception:  # noqa: BLE001 - skip, retry next refresh
                 lv = None

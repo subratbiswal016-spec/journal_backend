@@ -40,6 +40,10 @@ function marketStatus(now = new Date()) {
   if (mins >= MARKET_CLOSE_MIN) return { open: false, reason: "After hours" };
   return { open: true, reason: "Market open" };
 }
+function setCountdown(txt) {
+  const el = $("oiCountdown");
+  if (el) el.textContent = "⏱ " + txt;
+}
 function countdownLabel() {
   if (!marketStatus().open) return "paused";
   return $("autoRefresh").checked ? Math.max(0, state.countdown) + "s" : "off";
@@ -71,8 +75,16 @@ async function init() {
   const symSel = $("symbol");
   symSel.innerHTML = CFG.symbols.map((s) => `<option>${s}</option>`).join("");
   symSel.value = state.symbol;
-  symSel.addEventListener("change", () => { state.symbol = symSel.value; state.expiry = ""; load(true); });
-  $("expiry").addEventListener("change", () => { state.expiry = $("expiry").value; load(true); });
+  symSel.addEventListener("change", () => {
+    state.symbol = symSel.value; state.expiry = "";
+    if ($("chainMeta")) $("chainMeta").textContent = "Loading " + symSel.value + "…";
+    load(true);
+  });
+  $("expiry").addEventListener("change", () => {
+    state.expiry = $("expiry").value;
+    if ($("chainMeta")) $("chainMeta").textContent = "Loading " + state.symbol + " " + state.expiry + "…";
+    load(true);
+  });
   $("refreshBtn").addEventListener("click", () => load(true));
   $("autoRefresh").addEventListener("change", resetTick);
 
@@ -206,7 +218,7 @@ async function load(force = false) {
     state.loading = false;
     state.countdown = CFG.refresh_seconds;
     $("refreshBtn").classList.remove("busy");
-    $("refreshBtn").innerHTML = `⟳ <span id="countdown">${countdownLabel()}</span>`;
+    setCountdown(countdownLabel());
   }
 }
 
@@ -371,18 +383,18 @@ function startTick() {
       load(false);
       return;
     }
-    if (!$("autoRefresh").checked) { $("countdown").textContent = "off"; return; }
+    if (!$("autoRefresh").checked) { setCountdown("off"); return; }
     state.countdown -= 1;
     if (state.countdown <= 0) { load(false); }
-    $("countdown").textContent = Math.max(0, state.countdown) + "s";
+    setCountdown(Math.max(0, state.countdown) + "s");
   }, 1000);
 }
 function resetTick() {
   state.countdown = CFG.refresh_seconds;
-  $("countdown").textContent = countdownLabel();
+  setCountdown(countdownLabel());
 }
 function showClosed(mkt) {
-  $("countdown").textContent = "paused";
+  setCountdown("paused");
   const detail = {
     "Weekend": "Market closed (weekend)",
     "Exchange holiday": "Market closed (exchange holiday)",

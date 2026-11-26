@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Option OI Dashboard</title>
   <script>try{if(localStorage.getItem('oi-theme')==='light')document.documentElement.classList.add('light');}catch(e){}</script>
-  <link rel="stylesheet" href="style.css?v=31" />
+  <link rel="stylesheet" href="style.css?v=32" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
-  <script src="app.js?v=8" defer></script>
+  <script src="app.js?v=9" defer></script>
   <script src="journal.js?v=30" defer></script>
 </head>
 <body>
@@ -44,7 +44,8 @@
         <input type="checkbox" id="autoRefresh" checked />
         <span>Auto</span>
       </label>
-      <button id="refreshBtn" title="Refresh now">⟳ <span id="countdown">--</span></button>
+      <span id="oiCountdown" class="scr-countdown" title="Next auto-refresh">⏱ --</span>
+      <button id="refreshBtn" class="jbtn primary" title="Refresh now">⟳ Refresh</button>
     </div>
   </header>
 
