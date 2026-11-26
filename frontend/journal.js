@@ -248,19 +248,30 @@
     if (p === "this_month") return { start: iso(new Date(t.getFullYear(), t.getMonth(), 1)), end: iso(t) };
     if (p === "3m") { const s = new Date(t); s.setDate(s.getDate() - 90); return { start: iso(s), end: iso(t) }; }
     if (p === "1m") { const s = new Date(t); s.setDate(s.getDate() - 30); return { start: iso(s), end: iso(t) }; }
+    if (p === "1w") { const s = new Date(t); s.setDate(s.getDate() - 7); return { start: iso(s), end: iso(t) }; }
+    if (p && p.indexOf("fy:") === 0) { const y = +p.slice(3); return { start: `${y}-04-01`, end: `${y + 1}-03-31` }; }
     return { start: "", end: "" };
   }
   function bindHomeOnce() {
     if (homeBound) return; homeBound = true;
-    document.querySelectorAll("#homePeriod .dper").forEach((b) =>
-      b.addEventListener("click", () => {
-        const p = b.dataset.p;
-        document.querySelectorAll("#homePeriod .dper").forEach((x) => x.classList.toggle("active", x === b));
-        const cust = $("homeCustom");
-        if (p === "custom") { if (cust) cust.classList.remove("hidden"); return; } // wait for Apply
-        if (cust) cust.classList.add("hidden");
-        homePeriod = p; calMonth = null; loadHome();
-      }));
+    // Inject financial-year presets (current FY + 3 prior) before the Custom button.
+    const slot = $("fySlot");
+    if (slot && !slot.childElementCount) {
+      const now = new Date(), cfy = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+      let html = "";
+      for (let i = 0; i < 4; i++) { const y = cfy - i; html += `<button class="dper" data-p="fy:${y}">FY ${String(y).slice(2)}-${String(y + 1).slice(2)}</button>`; }
+      slot.innerHTML = html;
+    }
+    // Delegate clicks so the injected FY buttons work too.
+    if ($("homePeriod")) $("homePeriod").addEventListener("click", (e) => {
+      const b = e.target.closest(".dper"); if (!b) return;
+      const p = b.dataset.p;
+      document.querySelectorAll("#homePeriod .dper").forEach((x) => x.classList.toggle("active", x === b));
+      const cust = $("homeCustom");
+      if (p === "custom") { if (cust) cust.classList.remove("hidden"); return; } // wait for Apply
+      if (cust) cust.classList.add("hidden");
+      homePeriod = p; calMonth = null; loadHome();
+    });
     if ($("homeCustApply")) $("homeCustApply").addEventListener("click", () => {
       homeCustStart = $("homeCustStart").value; homeCustEnd = $("homeCustEnd").value;
       if (!homeCustStart && !homeCustEnd) { homeMsg("Pick a From and/or To date.", true); return; }
@@ -390,7 +401,7 @@
       }
       weeks.push(col);
     }
-    let html = `<div class="heat" style="grid-template-columns:repeat(${weeks.length},1fr)">`;
+    let html = `<div class="heat" style="grid-template-columns:repeat(${weeks.length},14px)">`;
     for (let r = 0; r < 7; r++) for (let w = 0; w < weeks.length; w++) {
       const c = weeks[w][r];
       if (c.v == null) html += `<div class="hc" title="${c.ds}"></div>`;

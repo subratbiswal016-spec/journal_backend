@@ -411,9 +411,9 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .kg-bar { width: 62px; height: 9px; border-radius: 6px; overflow: hidden; display: flex; background: var(--line); }
 .kg-bar .kb-g { background: var(--put); } .kg-bar .kb-r { background: var(--call); }
 /* progress-tracker heatmap */
-.heat-wrap { padding-top: 6px; }
-.heat { display: grid; gap: 3px; }
-.hc { aspect-ratio: 1; min-height: 8px; border-radius: 2px; background: var(--chip, rgba(127,127,127,.12)); }
+.heat-wrap { padding-top: 6px; overflow-x: auto; }
+.heat { display: grid; gap: 3px; width: max-content; }
+.hc { width: 14px; height: 14px; border-radius: 3px; background: var(--chip, rgba(127,127,127,.12)); }
 .hc.g { background: var(--put); } .hc.r { background: var(--call); }
 .heat-leg { display: flex; align-items: center; gap: 4px; justify-content: flex-end; margin-top: 10px; font-size: 10px; color: var(--muted); }
 .heat-leg i { width: 11px; height: 11px; border-radius: 2px; background: var(--chip, rgba(127,127,127,.12)); display: inline-block; }
