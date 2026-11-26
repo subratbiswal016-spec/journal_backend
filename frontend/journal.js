@@ -241,8 +241,10 @@
     if (a >= 1e3) return sg + "₹" + fmt(a / 1e3, 1) + "k";
     return sg + "₹" + fmt(a, 0);
   }
+  let homeCustStart = "", homeCustEnd = "";
   function homeRange(p) {
     const iso = (d) => d.toISOString().slice(0, 10), t = new Date();
+    if (p === "custom") return { start: homeCustStart || "", end: homeCustEnd || "" };
     if (p === "this_month") return { start: iso(new Date(t.getFullYear(), t.getMonth(), 1)), end: iso(t) };
     if (p === "3m") { const s = new Date(t); s.setDate(s.getDate() - 90); return { start: iso(s), end: iso(t) }; }
     if (p === "1m") { const s = new Date(t); s.setDate(s.getDate() - 30); return { start: iso(s), end: iso(t) }; }
@@ -252,10 +254,18 @@
     if (homeBound) return; homeBound = true;
     document.querySelectorAll("#homePeriod .dper").forEach((b) =>
       b.addEventListener("click", () => {
-        homePeriod = b.dataset.p; calMonth = null;
+        const p = b.dataset.p;
         document.querySelectorAll("#homePeriod .dper").forEach((x) => x.classList.toggle("active", x === b));
-        loadHome();
+        const cust = $("homeCustom");
+        if (p === "custom") { if (cust) cust.classList.remove("hidden"); return; } // wait for Apply
+        if (cust) cust.classList.add("hidden");
+        homePeriod = p; calMonth = null; loadHome();
       }));
+    if ($("homeCustApply")) $("homeCustApply").addEventListener("click", () => {
+      homeCustStart = $("homeCustStart").value; homeCustEnd = $("homeCustEnd").value;
+      if (!homeCustStart && !homeCustEnd) { homeMsg("Pick a From and/or To date.", true); return; }
+      homePeriod = "custom"; calMonth = null; loadHome();
+    });
     if ($("calPrev")) $("calPrev").addEventListener("click", () => shiftCal(-1));
     if ($("calNext")) $("calNext").addEventListener("click", () => shiftCal(1));
     if ($("homeSyncBtn")) $("homeSyncBtn").addEventListener("click", homeSync);

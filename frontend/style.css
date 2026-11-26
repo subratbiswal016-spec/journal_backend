@@ -392,6 +392,10 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
   font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 20px; cursor: pointer; }
 .dper:hover { color: var(--text); }
 .dper.active { background: var(--brand, #3b82f6); border-color: var(--brand, #3b82f6); color: #fff; }
+.home-custom { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin: 0 0 14px; }
+.home-custom label { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); gap: 4px; }
+.dinp { padding: 8px 10px; border-radius: 8px; background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); font-size: 13px; color-scheme: dark; }
 .kpi-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 16px; }
 .kpi { background: var(--card, #fff); border: 1px solid var(--line); border-radius: 14px; padding: 13px 15px;
   display: flex; align-items: center; justify-content: space-between; gap: 10px; }
