@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Option OI Dashboard</title>
   <script>try{if(localStorage.getItem('oi-theme')==='light')document.documentElement.classList.add('light');}catch(e){}</script>
-  <link rel="stylesheet" href="style.css?v=43" />
+  <link rel="stylesheet" href="style.css?v=44" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
   <script src="app.js?v=9" defer></script>
-  <script src="journal.js?v=45" defer></script>
+  <script src="journal.js?v=46" defer></script>
 </head>
 <body>
   <aside class="sidebar" id="sidebar">
@@ -85,7 +85,7 @@
   <main id="viewHome">
     <div class="dash">
       <div class="dash-head">
-        <h2>📊 Trading Dashboard</h2>
+        <h2>📊 Trading Dashboard <span id="homeBusy" class="home-busy hidden"></span></h2>
         <div class="dash-actions">
           <button id="homeSyncBtn" class="jbtn primary" style="display:none" title="Pull today's trades from Fyers">⬇ Sync from Fyers</button>
           <div class="dash-period" id="homePeriod">

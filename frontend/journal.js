@@ -310,15 +310,27 @@
     } catch (e) { homeMsg("Sync failed: " + e.message, true); }
     finally { btn.disabled = false; btn.textContent = old; }
   }
+  let homeLoadSeq = 0;
   async function loadHome() {
     bindHomeOnce();
+    const seq = ++homeLoadSeq;                 // guard against stale responses
+    const dash = document.querySelector(".dash");
+    if (dash) dash.classList.add("loading");
+    if ($("homeBusy")) $("homeBusy").classList.remove("hidden");
     const r = homeRange(homePeriod);
     const q = (r.start || r.end) ? `?start=${r.start}&end=${r.end}` : "";
     try {
-      homeData = await (await fetch("/api/journal/overview" + q)).json();
+      const d = await (await fetch("/api/journal/overview" + q)).json();
+      if (seq !== homeLoadSeq) return;         // a newer filter was applied; drop this
+      homeData = d;
       renderHome(homeData);
     } catch (e) {
-      if ($("homeEmpty")) $("homeEmpty").textContent = "Could not load dashboard: " + e.message;
+      if (seq === homeLoadSeq && $("homeEmpty")) $("homeEmpty").textContent = "Could not load dashboard: " + e.message;
+    } finally {
+      if (seq === homeLoadSeq) {
+        if (dash) dash.classList.remove("loading");
+        if ($("homeBusy")) $("homeBusy").classList.add("hidden");
+      }
     }
   }
   function renderHome(d) {

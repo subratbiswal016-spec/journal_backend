@@ -377,6 +377,12 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 /* =================== analytics Dashboard (home) =================== */
 .jcard { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
 .dash { max-width: none; margin: 0; padding: 18px 24px 44px; }
+.home-busy { display: inline-block; width: 16px; height: 16px; vertical-align: -2px; margin-left: 8px;
+  border: 2px solid var(--line); border-top-color: var(--accent, #6ea8fe); border-radius: 50%;
+  animation: dspin .7s linear infinite; }
+@keyframes dspin { to { transform: rotate(360deg); } }
+.dash.loading .kpi-row, .dash.loading .pnl-sum, .dash.loading .dash-grid {
+  opacity: .45; pointer-events: none; transition: opacity .15s ease; }
 .dash-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .dash-head h2 { margin: 0; font-size: 20px; }
 .dash-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
