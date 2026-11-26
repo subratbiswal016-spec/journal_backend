@@ -386,7 +386,7 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .dash-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .dash-head h2 { margin: 0; font-size: 20px; }
 .dash-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.dash-period { display: flex; gap: 6px; }
+.dash-period { display: flex; gap: 6px; flex-wrap: wrap; }
 /* performance score (radar) */
 .dash-score .score-wrap { display: flex; align-items: center; gap: 12px; }
 .dash-score .score-chart { flex: 1; height: 190px; }
@@ -400,22 +400,32 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .dper.active { background: var(--brand, #3b82f6); border-color: var(--brand, #3b82f6); color: #fff; }
 /* date-range filter dropdown */
 .date-filter { position: relative; }
-.df-btn { display: inline-flex; align-items: center; gap: 7px; }
+.df-btn { display: inline-flex; align-items: center; gap: 7px; border-radius: 20px; padding: 6px 12px; font-size: 12px; }
+.df-btn.active { background: var(--brand, #3b82f6); border-color: var(--brand, #3b82f6); color: #fff; }
 .df-ico { opacity: .8; } .df-caret { font-size: 10px; opacity: .7; }
-.df-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 70; min-width: 220px;
-  max-width: calc(100vw - 24px); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px;
+.df-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 70; width: 252px;
+  max-width: calc(100vw - 24px); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px;
   box-shadow: 0 16px 40px rgba(0,0,0,.4); }
+.light .df-menu { box-shadow: 0 12px 30px rgba(0,0,0,.14); }
 @media (max-width: 560px) { .df-menu { right: auto; left: 0; } }
-.df-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); margin: 2px 2px 8px; }
+.df-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); margin: 0 0 8px; }
+.fy-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+.fy-grid .dper { text-align: center; border-radius: 8px; padding: 7px 8px; background: var(--panel-2); }
+.fy-grid .dper:hover { color: var(--text); border-color: var(--accent); }
+.fy-grid .dper.active { background: var(--brand, #3b82f6); border-color: var(--brand, #3b82f6); color: #fff; }
 .dper-col { flex-direction: column; align-items: stretch; gap: 3px; }
-.dper-col .dper { text-align: left; border-color: transparent; background: transparent; padding: 8px 12px; border-radius: 8px; }
-.dper-col .dper:hover { background: var(--panel-2); color: var(--text); }
+.dper-col .dper { text-align: left; border-color: var(--line); background: var(--panel-2); padding: 8px 12px; border-radius: 8px; }
+.dper-col .dper:hover { border-color: var(--accent); color: var(--text); }
 .dper-col .dper.active { background: var(--brand, #3b82f6); border-color: var(--brand, #3b82f6); color: #fff; }
-.df-menu .home-custom { margin: 8px 2px 2px; padding-top: 10px; border-top: 1px solid var(--line); }
+.df-menu .home-custom { display: flex; flex-direction: column; align-items: stretch; gap: 9px;
+  margin: 10px 0 0; padding-top: 10px; border-top: 1px solid var(--line); }
+.df-menu .home-custom .dinp { width: 100%; }
+.df-menu .home-custom #homeCustApply { width: 100%; }
 .home-custom { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; margin: 0 0 14px; }
 .home-custom label { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); gap: 4px; }
 .dinp { padding: 8px 10px; border-radius: 8px; background: var(--panel-2); color: var(--text);
   border: 1px solid var(--line); font-size: 13px; color-scheme: dark; }
+.light .dinp { color-scheme: light; }
 .kpi-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 16px; }
 /* P&L & charges breakdown strip */
 .pnl-sum { display: flex; flex-wrap: wrap; background: var(--card, #fff); border: 1px solid var(--line);

@@ -262,35 +262,47 @@
       for (let i = 0; i < 4; i++) { const y = cfy - i; html += `<button class="dper" data-p="fy:${y}">FY ${String(y).slice(2)}-${String(y + 1).slice(2)}</button>`; }
       slot.innerHTML = html;
     }
-    // Filter dropdown: open/close + outside-click / Escape close.
-    const dfMenu = $("dfMenu");
+    // Filter dropdown (FY + Custom): open/close + outside-click / Escape close.
+    const dfMenu = $("dfMenu"), dfBtn = $("dfBtn");
+    function syncPeriodUI(activePeriod) {
+      document.querySelectorAll("#dashPeriodBar .dper").forEach((x) =>
+        x.classList.toggle("active", x.dataset.p === activePeriod));
+      const inMenu = activePeriod && (activePeriod.indexOf("fy:") === 0 || activePeriod === "custom");
+      if (dfBtn) dfBtn.classList.toggle("active", !!inMenu);
+      if (!inMenu && $("dfLabel")) $("dfLabel").textContent = "Filter";
+      if ($("homeCustom")) $("homeCustom").classList.toggle("hidden", activePeriod !== "custom");
+    }
     function closeDf() {
       if (!dfMenu || dfMenu.classList.contains("hidden")) return;
       dfMenu.classList.add("hidden");
-      document.querySelectorAll("#homePeriod .dper").forEach((x) => x.classList.toggle("active", x.dataset.p === homePeriod));
-      if ($("homeCustom")) $("homeCustom").classList.toggle("hidden", homePeriod !== "custom");
+      syncPeriodUI(homePeriod);
     }
-    if ($("dfBtn")) $("dfBtn").addEventListener("click", (e) => {
+    if (dfBtn) dfBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       if (!dfMenu) return;
-      if (dfMenu.classList.contains("hidden")) dfMenu.classList.remove("hidden");
-      else closeDf();
+      if (dfMenu.classList.contains("hidden")) {
+        dfMenu.classList.remove("hidden");
+        if (homePeriod === "custom" && $("homeCustom")) $("homeCustom").classList.remove("hidden");
+      } else closeDf();
     });
     document.addEventListener("click", (e) => {
       if (!e.target.closest(".date-filter")) closeDf();
     });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDf(); });
-    // Delegate clicks so the injected FY buttons work too.
-    if ($("homePeriod")) $("homePeriod").addEventListener("click", (e) => {
+    // Delegate clicks across quick pills + FY grid + Custom button.
+    if ($("dashPeriodBar")) $("dashPeriodBar").addEventListener("click", (e) => {
       const b = e.target.closest(".dper"); if (!b) return;
       const p = b.dataset.p;
-      document.querySelectorAll("#homePeriod .dper").forEach((x) => x.classList.toggle("active", x === b));
-      const cust = $("homeCustom");
-      if (p === "custom") { if (cust) cust.classList.remove("hidden"); return; } // wait for Apply
-      if (cust) cust.classList.add("hidden");
-      if ($("dfLabel")) $("dfLabel").textContent = b.textContent.trim();
+      if (p === "custom") {
+        document.querySelectorAll("#dashPeriodBar .dper").forEach((x) => x.classList.toggle("active", x === b));
+        if ($("homeCustom")) $("homeCustom").classList.remove("hidden");
+        return; // wait for Apply
+      }
+      homePeriod = p; calMonth = null;
+      if (p.indexOf("fy:") === 0 && $("dfLabel")) $("dfLabel").textContent = b.textContent.trim();
       if (dfMenu) dfMenu.classList.add("hidden");
-      homePeriod = p; calMonth = null; loadHome();
+      syncPeriodUI(homePeriod);
+      loadHome();
     });
     if ($("homeCustApply")) $("homeCustApply").addEventListener("click", () => {
       homeCustStart = $("homeCustStart").value; homeCustEnd = $("homeCustEnd").value;
@@ -299,6 +311,7 @@
       if ($("dfLabel")) $("dfLabel").textContent = (homeCustStart || "…") + " → " + (homeCustEnd || "…");
       homePeriod = "custom"; calMonth = null;
       if (dfMenu) dfMenu.classList.add("hidden");
+      syncPeriodUI(homePeriod);
       loadHome();
     });
     if ($("calPrev")) $("calPrev").addEventListener("click", () => shiftCal(-1));
