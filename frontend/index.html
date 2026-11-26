@@ -5,28 +5,34 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Option OI Dashboard</title>
   <script>try{if(localStorage.getItem('oi-theme')==='light')document.documentElement.classList.add('light');}catch(e){}</script>
-  <link rel="stylesheet" href="style.css?v=33" />
+  <link rel="stylesheet" href="style.css?v=35" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
   <script src="app.js?v=9" defer></script>
-  <script src="journal.js?v=33" defer></script>
+  <script src="journal.js?v=35" defer></script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
+  <aside class="sidebar" id="sidebar">
+    <div class="sb-brand">
       <span class="dot"></span>
-      <h1>Option OI Dashboard</h1>
-      <span id="sourceBadge" class="badge">NSE</span>
-      <nav class="tabs">
-        <button class="tab active" data-view="home">📊 Dashboard</button>
-        <button class="tab" data-view="oi">📈 Market</button>
-        <button class="tab" data-view="journal">📓 Journal</button>
-        <button class="tab" data-view="screener">🔎 Screener</button>
-        <button class="tab" data-view="ipo">🆕 IPO<span id="ipoBadge" class="tab-badge hidden"></span></button>
-        <button class="tab" data-view="insights">🔍 Insights</button>
-        <button class="tab" data-view="rules">⚖ Rules</button>
-      </nav>
-      <button id="themeBtn" class="theme-btn" title="Toggle light / dark theme">🌙</button>
+      <div class="sb-name">Option OI <span id="sourceBadge" class="badge">NSE</span></div>
     </div>
+    <nav class="tabs">
+      <button class="tab active" data-view="home">📊 Dashboard</button>
+      <button class="tab" data-view="oi">📈 Market</button>
+      <button class="tab" data-view="journal">📓 Journal</button>
+      <button class="tab" data-view="screener">🔎 Screener</button>
+      <button class="tab" data-view="ipo">🆕 IPO<span id="ipoBadge" class="tab-badge hidden"></span></button>
+      <button class="tab" data-view="insights">🔍 Insights</button>
+      <button class="tab" data-view="rules">⚖ Rules</button>
+    </nav>
+    <div class="sb-foot">
+      <button id="themeBtn" class="theme-btn" title="Toggle light / dark theme">🌙 Theme</button>
+    </div>
+  </aside>
+
+  <div class="app-content">
+  <header class="topbar">
+    <button id="sbToggle" class="sb-toggle" title="Menu" aria-label="Menu">☰</button>
     <div class="hsearch">
       <input id="stockSearch" type="search" name="stocksearch" placeholder="🔍 Search a stock…"
              autocomplete="off" autocapitalize="off" spellcheck="false"
@@ -86,7 +92,7 @@
       <div class="dash-grid">
         <div class="jcard dash-wide"><h3 class="dash-ct">Cumulative net P&amp;L</h3><div class="dash-chart"><canvas id="homeEquity"></canvas></div></div>
         <div class="jcard"><h3 class="dash-ct">Win / loss days</h3><div class="dash-chart"><canvas id="homeWinLoss"></canvas></div></div>
-        <div class="jcard dash-cal">
+        <div class="jcard dash-wide dash-cal">
           <div class="cal-head"><button id="calPrev" class="jbtn">‹</button><h3 class="dash-ct" id="calTitle">—</h3><button id="calNext" class="jbtn">›</button></div>
           <div id="homeCal" class="cal-grid"></div>
           <div id="homeCalSum" class="cal-sum"></div>
@@ -511,5 +517,7 @@
     <span>Data: <span id="footSource">—</span> · <span id="footNote"></span> For personal use. Not investment advice.</span>
     <span id="lastUpdated"></span>
   </footer>
+  </div><!-- /.app-content -->
+  <div id="sbBackdrop" class="sb-backdrop hidden"></div>
 </body>
 </html>

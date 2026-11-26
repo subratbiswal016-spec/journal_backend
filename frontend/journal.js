@@ -53,10 +53,14 @@
   // ---------------------------------------------------------------- tabs
   document.querySelectorAll(".tab").forEach((btn) =>
     btn.addEventListener("click", () => switchView(btn.dataset.view)));
+  // mobile sidebar toggle
+  if ($("sbToggle")) $("sbToggle").addEventListener("click", () => document.body.classList.toggle("sb-open"));
+  if ($("sbBackdrop")) $("sbBackdrop").addEventListener("click", () => document.body.classList.remove("sb-open"));
   refreshIpoBadge();   // show the IPO notification badge from any screen
 
   let journalSub = "journal";          // "journal" | "capital" — sub-tab inside Journal
   function switchView(view) {
+    document.body.classList.remove("sb-open");   // close the mobile sidebar on nav
     document.querySelectorAll(".tab").forEach((b) =>
       b.classList.toggle("active", b.dataset.view === view));
     const isJ = view === "journal";
@@ -289,24 +293,32 @@
   function renderCal(daily) {
     if (!calMonth || !$("homeCal")) return;
     const { y, m } = calMonth;
+    const pad = (n) => String(n).padStart(2, "0");
     $("calTitle").textContent = _MONF[m] + " " + y;
     const byDate = {}; daily.forEach((x) => { byDate[x.date] = (byDate[x.date] || 0) + (+x.realized || 0); });
-    const startDow = (new Date(y, m, 1).getDay() + 6) % 7;   // Mon=0
+    const firstDow = new Date(y, m, 1).getDay();            // 0 = Sun
     const days = new Date(y, m + 1, 0).getDate();
-    const dows = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-    let cells = dows.map((d) => `<div class="cal-dow">${d}</div>`).join("");
-    for (let i = 0; i < startDow; i++) cells += `<div class="cal-cell empty"></div>`;
-    let mtot = 0, mdays = 0;
-    for (let d = 1; d <= days; d++) {
-      const ds = `${y}-${String(m + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-      const v = byDate[ds];
-      let cls = "cal-cell", inner = `<span class="cal-d">${d}</span>`;
-      if (v != null) { cls += v > 0 ? " pos" : v < 0 ? " neg" : " flat"; inner += `<span class="cal-pl">${moneyShort(v)}</span>`; mtot += v; mdays++; }
-      cells += `<div class="${cls}">${inner}</div>`;
+    const dows = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    let html = dows.map((d) => `<div class="cal-dow">${d}</div>`).join("") + `<div class="cal-dow cal-wkh">Week</div>`;
+    let mtot = 0, mdays = 0, day = 1 - firstDow, week = 1;
+    while (day <= days) {
+      let row = "", wtot = 0, wdays = 0;
+      for (let i = 0; i < 7; i++, day++) {
+        if (day < 1 || day > days) { row += `<div class="cal-cell empty"></div>`; continue; }
+        const v = byDate[`${y}-${pad(m + 1)}-${pad(day)}`];
+        let cls = "cal-cell", inner = `<span class="cal-d">${day}</span>`;
+        if (v != null) { cls += v > 0 ? " pos" : v < 0 ? " neg" : " flat"; inner += `<span class="cal-pl">${moneyShort(v)}</span>`; wtot += v; wdays++; mtot += v; mdays++; }
+        row += `<div class="${cls}">${inner}</div>`;
+      }
+      row += `<div class="cal-week ${wdays ? (wtot >= 0 ? "pos" : "neg") : ""}">` +
+        `<div class="cw-l">Week ${week}</div>` +
+        `<div class="cw-v">${wdays ? moneyShort(wtot) : "₹0"}</div>` +
+        `<div class="cw-d">${wdays} day${wdays === 1 ? "" : "s"}</div></div>`;
+      html += row; week++;
     }
-    $("homeCal").innerHTML = cells;
+    $("homeCal").innerHTML = html;
     $("homeCalSum").innerHTML = mdays
-      ? `<b class="${mtot >= 0 ? "pos" : "neg"}">${signed(mtot)}</b> · ${mdays} trading day${mdays > 1 ? "s" : ""}`
+      ? `Month: <b class="${mtot >= 0 ? "pos" : "neg"}">${signed(mtot)}</b> · ${mdays} trading day${mdays > 1 ? "s" : ""}`
       : `<span class="modal-sub">No trades this month</span>`;
   }
   function renderHomeTrades(trades) {
