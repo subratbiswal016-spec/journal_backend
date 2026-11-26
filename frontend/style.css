@@ -397,6 +397,19 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .dinp { padding: 8px 10px; border-radius: 8px; background: var(--panel-2); color: var(--text);
   border: 1px solid var(--line); font-size: 13px; color-scheme: dark; }
 .kpi-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 16px; }
+/* P&L & charges breakdown strip */
+.pnl-sum { display: flex; flex-wrap: wrap; background: var(--card, #fff); border: 1px solid var(--line);
+  border-radius: 14px; margin-bottom: 16px; }
+.pnl-sum:empty { display: none; }
+.pnl-i { flex: 1; min-width: 130px; padding: 11px 16px; border-right: 1px solid var(--line); }
+.pnl-i:last-child { border-right: none; }
+.pnl-k { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
+.pnl-v { font-size: 17px; font-weight: 800; margin-top: 3px; }
+.pnl-v.pos { color: var(--put); } .pnl-v.neg { color: var(--call); }
+.pnl-sub { font-size: 10.5px; color: var(--muted); margin-top: 3px; }
+.pnl-bar { display: flex; height: 8px; border-radius: 6px; overflow: hidden; margin: 7px 0 2px; background: var(--line); }
+.pnl-bar .pb-g { background: var(--put); } .pnl-bar .pb-r { background: var(--call); }
+@media (max-width: 900px) { .pnl-i { min-width: 45%; border-bottom: 1px solid var(--line); } }
 .kpi { background: var(--card, #fff); border: 1px solid var(--line); border-radius: 14px; padding: 13px 15px;
   display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .kpi-main { min-width: 0; }

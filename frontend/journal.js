@@ -346,6 +346,21 @@
     if ($("homeEmpty")) $("homeEmpty").textContent = daily.length ? "" :
       "No trades yet — sync from Fyers/Dhan or add trades in the Journal, and your dashboard fills in automatically.";
 
+    // P&L & charges breakdown (like a broker's Realised-P&L summary)
+    if ($("homePnl")) {
+      const totDays = pdays + ldays, profPct = totDays ? Math.round(pdays / totDays * 100) : 0;
+      const neg = (v) => "−₹" + fmt(Math.abs(+v || 0), 0);
+      const pItem = (k, v, cls, sub) => `<div class="pnl-i"><div class="pnl-k">${k}</div><div class="pnl-v ${cls || ""}">${v}</div>${sub ? `<div class="pnl-sub">${sub}</div>` : ""}</div>`;
+      $("homePnl").innerHTML = daily.length ? (
+        pItem("Gross P&L", signed(s.total_realized || 0), (s.total_realized || 0) >= 0 ? "pos" : "neg") +
+        pItem("Brokerage", neg(s.total_brokerage), "neg") +
+        pItem("Other charges", neg(s.total_charges), "neg", "STT · GST · txn · stamp") +
+        pItem("Total charges", neg(s.total_costs), "neg", s.costs_estimated ? "estimated" : "actual") +
+        pItem("Net P&L", signed(net), net >= 0 ? "pos" : "neg") +
+        `<div class="pnl-i"><div class="pnl-k">Profitable days</div><div class="pnl-bar"><span class="pb-g" style="width:${profPct}%"></span><span class="pb-r" style="width:${100 - profPct}%"></span></div><div class="pnl-sub">${profPct}% win · ${100 - profPct}% loss (${pdays}/${ldays})</div></div>`
+      ) : "";
+    }
+
     let cum = 0, peak = 0; const labels = [], equity = [], dd = [];
     daily.forEach((x) => { cum += (+x.realized || 0); labels.push(x.date); equity.push(round2(cum)); peak = Math.max(peak, cum); dd.push(round2(cum - peak)); });
     drawHomeLine("homeEquity", labels, equity, "equity");
@@ -473,8 +488,9 @@
     if (homeCharts[id]) homeCharts[id].destroy();
     const c = homeColors(), color = kind === "dd" ? c.call : c.put;
     homeCharts[id] = new Chart(el, { type: "line",
-      data: { labels, datasets: [{ data, borderColor: color, backgroundColor: color + "22", borderWidth: 2, pointRadius: 0, fill: true, tension: .2 }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (x) => "₹" + fmt(x.parsed.y, 0) } } },
+      data: { labels, datasets: [{ data, borderColor: color, backgroundColor: color + "22", borderWidth: 2.5, pointRadius: 0, pointHoverRadius: 4, fill: true, tension: .4, cubicInterpolationMode: "monotone" }] },
+      options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false }, elements: { line: { borderJoinStyle: "round", borderCapStyle: "round" } },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { title: (x) => x[0] ? x[0].label : "", label: (x) => "₹" + fmt(x.parsed.y, 0) } } },
         scales: { x: { grid: { display: false }, ticks: { color: c.tick, maxTicksLimit: 6, font: { size: 10 } } }, y: { grid: { color: c.grid }, ticks: { color: c.tick, font: { size: 10 }, callback: (v) => moneyShort(v) } } } } });
   }
   function drawBalance(labels, equity, opening) {
@@ -484,10 +500,11 @@
     const bal = equity.map((v) => round2(opening + v));
     const up = bal.length ? bal[bal.length - 1] >= (opening || bal[0]) : true;
     const col = up ? c.put : c.call;
-    const ds = [{ label: "Balance", data: bal, borderColor: col, backgroundColor: col + "22", borderWidth: 2, pointRadius: 0, fill: true, tension: .2 }];
+    const ds = [{ label: "Balance", data: bal, borderColor: col, backgroundColor: col + "22", borderWidth: 2.5, pointRadius: 0, pointHoverRadius: 4, fill: true, tension: .4, cubicInterpolationMode: "monotone" }];
     if (opening) ds.push({ label: "Opening capital", data: labels.map(() => opening), borderColor: c.tick, borderWidth: 1, borderDash: [4, 4], pointRadius: 0, fill: false });
     homeCharts.homeBalance = new Chart(el, { type: "line", data: { labels, datasets: ds },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: opening > 0, labels: { color: c.tick, boxWidth: 12, font: { size: 10 } } }, tooltip: { callbacks: { label: (x) => x.dataset.label + ": ₹" + fmt(x.parsed.y, 0) } } },
+      options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+        plugins: { legend: { display: opening > 0, labels: { color: c.tick, boxWidth: 12, font: { size: 10 } } }, tooltip: { callbacks: { label: (x) => x.dataset.label + ": ₹" + fmt(x.parsed.y, 0) } } },
         scales: { x: { grid: { display: false }, ticks: { color: c.tick, maxTicksLimit: 6, font: { size: 10 } } }, y: { grid: { color: c.grid }, ticks: { color: c.tick, font: { size: 10 }, callback: (v) => moneyShort(v) } } } } });
   }
   function drawHomeBars(id, daily) {
@@ -497,7 +514,8 @@
     const data = daily.map((x) => +x.realized || 0);
     homeCharts[id] = new Chart(el, { type: "bar",
       data: { labels: daily.map((x) => x.date), datasets: [{ data, backgroundColor: data.map((v) => v >= 0 ? c.put : c.call), borderWidth: 0 }] },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (x) => "₹" + fmt(x.parsed.y, 0) } } },
+      options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: (x) => "₹" + fmt(x.parsed.y, 0) } } },
         scales: { x: { grid: { display: false }, ticks: { color: c.tick, maxTicksLimit: 8, font: { size: 10 } } }, y: { grid: { color: c.grid }, ticks: { color: c.tick, font: { size: 10 }, callback: (v) => moneyShort(v) } } } } });
   }
   function drawWinLoss(id, w, l) {
