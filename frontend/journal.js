@@ -53,8 +53,18 @@
   // ---------------------------------------------------------------- tabs
   document.querySelectorAll(".tab").forEach((btn) =>
     btn.addEventListener("click", () => switchView(btn.dataset.view)));
-  // mobile sidebar toggle
-  if ($("sbToggle")) $("sbToggle").addEventListener("click", () => document.body.classList.toggle("sb-open"));
+  // sidebar: ☰ opens (mobile) or re-opens a collapsed sidebar (desktop);
+  // « collapses it. A resize nudge lets the charts refit to the new width.
+  const sbIsMobile = () => window.matchMedia("(max-width: 860px)").matches;
+  const sbNudge = () => setTimeout(() => { try { window.dispatchEvent(new Event("resize")); } catch (e) {} }, 240);
+  if ($("sbToggle")) $("sbToggle").addEventListener("click", () => {
+    if (sbIsMobile()) document.body.classList.toggle("sb-open");
+    else { document.body.classList.remove("sb-collapsed"); sbNudge(); }
+  });
+  if ($("sbCollapse")) $("sbCollapse").addEventListener("click", () => {
+    if (sbIsMobile()) document.body.classList.remove("sb-open");
+    else { document.body.classList.add("sb-collapsed"); sbNudge(); }
+  });
   if ($("sbBackdrop")) $("sbBackdrop").addEventListener("click", () => document.body.classList.remove("sb-open"));
   refreshIpoBadge();   // show the IPO notification badge from any screen
 
@@ -203,6 +213,27 @@
       }));
     if ($("calPrev")) $("calPrev").addEventListener("click", () => shiftCal(-1));
     if ($("calNext")) $("calNext").addEventListener("click", () => shiftCal(1));
+    if ($("homeSyncBtn")) $("homeSyncBtn").addEventListener("click", homeSync);
+  }
+  function homeMsg(t, err) {
+    const m = $("homeSyncMsg"); if (!m) return;
+    m.className = "jnote" + (err ? " err" : ""); m.textContent = t; m.classList.remove("hidden");
+    setTimeout(() => m.classList.add("hidden"), 6000);
+  }
+  async function homeSync() {
+    const btn = $("homeSyncBtn"), old = btn.textContent;
+    btn.disabled = true; btn.textContent = "Syncing…";
+    try {
+      const r = await fetch("/api/journal/sync", { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        if (r.status === 401) { homeMsg("Log in to Fyers (open Market, then log in) before syncing.", true); return; }
+        throw new Error(d.detail || d.error || "Sync failed");
+      }
+      homeMsg(`✅ Synced ${d.round_trips || 0} trade${d.round_trips === 1 ? "" : "s"} from Fyers · today's P&L ${signed(d.realized_today || 0)}` + (d.open_positions ? ` · ${d.open_positions} open` : ""));
+      loadHome();
+    } catch (e) { homeMsg("Sync failed: " + e.message, true); }
+    finally { btn.disabled = false; btn.textContent = old; }
   }
   async function loadHome() {
     bindHomeOnce();
@@ -249,6 +280,60 @@
     }
     renderCal(daily);
     renderHomeTrades(d.recent_trades || []);
+    drawRadar(s, daily, pf, dayWin);
+    drawScatter(d.recent_trades || []);
+    if ($("homeSyncBtn")) $("homeSyncBtn").style.display = d.can_sync ? "" : "none";
+  }
+  const _clamp = (v) => Math.max(0, Math.min(100, v));
+  function drawRadar(s, daily, pf, dayWin) {
+    const el = $("homeRadar"); if (!el || typeof Chart === "undefined") return;
+    let winSum = 0, winN = 0, lossSum = 0, lossN = 0, cum = 0, peak = 0, maxDD = 0;
+    daily.forEach((x) => {
+      const v = +x.realized || 0;
+      if (v > 0) { winSum += v; winN++; } else if (v < 0) { lossSum += -v; lossN++; }
+      cum += v; peak = Math.max(peak, cum); maxDD = Math.max(maxDD, peak - cum);
+    });
+    const avgWin = winN ? winSum / winN : 0, avgLoss = lossN ? lossSum / lossN : 0;
+    const wl = avgLoss > 0 ? avgWin / avgLoss : (avgWin > 0 ? 3 : 0);
+    const net = cum, recovery = maxDD > 0 ? net / maxDD : (net > 0 ? 3 : 0);
+    const axes = [
+      _clamp(s.win_rate || 0),
+      _clamp(pf === Infinity ? 100 : pf * 33.3),
+      _clamp(wl * 50),
+      _clamp(dayWin),
+      _clamp(maxDD > 0 ? (net > 0 ? net / (net + maxDD) * 100 : 0) : (net > 0 ? 100 : 50)),
+      _clamp(recovery * 33.3),
+    ];
+    const overall = Math.round(axes.reduce((a, b) => a + b, 0) / axes.length);
+    if ($("scoreVal")) $("scoreVal").textContent = daily.length ? overall : "—";
+    if ($("scoreTag")) $("scoreTag").textContent = !daily.length ? "" :
+      overall >= 70 ? "Strong" : overall >= 50 ? "Solid" : overall >= 30 ? "Developing" : "Needs work";
+    const c = homeColors();
+    if (homeCharts.homeRadar) homeCharts.homeRadar.destroy();
+    homeCharts.homeRadar = new Chart(el, { type: "radar",
+      data: { labels: ["Win %", "Profit factor", "Avg win/loss", "Day win %", "Drawdown ctrl", "Recovery"],
+        datasets: [{ data: axes, borderColor: c.put, backgroundColor: c.put + "33", borderWidth: 2, pointRadius: 2, pointBackgroundColor: c.put }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (x) => x.label + ": " + Math.round(x.parsed.r) } } },
+        scales: { r: { min: 0, max: 100, grid: { color: c.grid }, angleLines: { color: c.grid }, pointLabels: { color: c.tick, font: { size: 10 } }, ticks: { display: false, stepSize: 25 } } } } });
+  }
+  function drawScatter(trades) {
+    const el = $("homeScatter"); if (!el || typeof Chart === "undefined") return;
+    const c = homeColors(), pts = [], cols = [];
+    (trades || []).forEach((t) => {
+      if (t.pnl == null || !t.time) return;
+      const m = String(t.time).match(/(\d{1,2}):(\d{2})/);
+      if (!m) return;
+      const h = +m[1] + (+m[2]) / 60;
+      if (h < 8 || h > 16.5) return;
+      pts.push({ x: Math.round(h * 100) / 100, y: +t.pnl }); cols.push((+t.pnl) >= 0 ? c.put : c.call);
+    });
+    if (homeCharts.homeScatter) homeCharts.homeScatter.destroy();
+    homeCharts.homeScatter = new Chart(el, { type: "scatter",
+      data: { datasets: [{ data: pts, pointBackgroundColor: cols, pointBorderColor: cols, pointRadius: 3, pointHoverRadius: 5 }] },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false },
+          tooltip: { callbacks: { label: (x) => { const hh = Math.floor(x.parsed.x), mm = Math.round((x.parsed.x - hh) * 60); return `${hh}:${String(mm).padStart(2, "0")} · ₹${fmt(x.parsed.y, 0)}`; } } } },
+        scales: { x: { min: 9, max: 15.75, grid: { color: c.grid }, ticks: { color: c.tick, stepSize: 1, font: { size: 10 }, callback: (v) => v + ":00" } },
+          y: { grid: { color: c.grid }, ticks: { color: c.tick, font: { size: 10 }, callback: (v) => moneyShort(v) } } } } });
   }
   function homeColors() {
     const css = getComputedStyle(document.body);

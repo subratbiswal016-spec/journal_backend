@@ -361,10 +361,18 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 
 /* =================== analytics Dashboard (home) =================== */
 .jcard { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
-.dash { max-width: 1180px; margin: 0 auto; padding: 18px 20px 40px; }
+.dash { max-width: none; margin: 0; padding: 18px 24px 44px; }
 .dash-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
 .dash-head h2 { margin: 0; font-size: 20px; }
+.dash-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .dash-period { display: flex; gap: 6px; }
+/* performance score (radar) */
+.dash-score .score-wrap { display: flex; align-items: center; gap: 12px; }
+.dash-score .score-chart { flex: 1; height: 190px; }
+.score-num { text-align: center; min-width: 78px; }
+.score-num b { font-size: 34px; font-weight: 800; display: block; line-height: 1; }
+.score-num span { font-size: 11px; color: var(--muted); }
+.score-num small { display: block; margin-top: 6px; font-size: 12px; font-weight: 700; color: var(--put); }
 .dper { background: var(--chip, rgba(127,127,127,.08)); border: 1px solid var(--line); color: var(--muted);
   font-size: 12px; font-weight: 600; padding: 6px 12px; border-radius: 20px; cursor: pointer; }
 .dper:hover { color: var(--text); }
@@ -504,7 +512,15 @@ footer {
 .sidebar .tab-badge { margin-left: auto; }
 .sb-foot { margin-top: auto; padding-top: 10px; }
 .sb-foot .theme-btn { width: 100%; text-align: left; height: auto; padding: 9px 12px; border-radius: 9px; }
-.app-content { margin-left: 212px; min-height: 100vh; }
+.app-content { margin-left: 212px; min-height: 100vh; transition: margin-left .2s ease; }
+.sb-collapse { margin-left: auto; background: transparent; border: none; color: var(--muted);
+  font-size: 18px; line-height: 1; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+.sb-collapse:hover { color: var(--text); background: var(--panel-2); }
+/* desktop collapse */
+.sidebar { transition: transform .2s ease; }
+body.sb-collapsed .sidebar { transform: translateX(-100%); }
+body.sb-collapsed .app-content { margin-left: 0; }
+body.sb-collapsed .sb-toggle { display: inline-flex; }
 .sb-toggle { display: none; background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
   font-size: 18px; line-height: 1; border-radius: 8px; padding: 6px 11px; cursor: pointer; }
 .sb-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 55; }
