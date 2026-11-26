@@ -984,7 +984,8 @@
     html += `<div class="ana-cols">`;
     html += `<div class="ana-col"><div class="ana-colh">📊 Technicals</div>` + techTabHtml(t, scls) + `</div>`;
     html += `<div class="ana-col"><div class="ana-colh">💰 Fundamentals</div>` +
-      (s.fundLoading ? `<p class="modal-sub">Loading fundamentals…</p>` : fundTabHtml(f, s.sym)) + `</div>`;
+      (s.fundLoading ? `<p class="modal-sub">Loading fundamentals…</p>` : fundTabHtml(f, s.sym)) +
+      readNotesHtml(t) + `</div>`;
     html += `</div>`;
 
     $("anaBody").innerHTML = html;
@@ -1042,9 +1043,12 @@
       if (rets.length) html += sect("↗ Returns") + `<div class="ana-rets">` +
         rets.map(([k, v]) => `<div class="ana-ret"><span>${k}</span><b class="${signCls(v)}">${v >= 0 ? "+" : ""}${v}%</b></div>`).join("") + `</div>`;
     }
-    html += sect("📝 Read") + `<ul class="ana-notes">` +
-      (d.notes || []).map((n) => `<li>${esc(n)}</li>`).join("") + `</ul>`;
     return html;
+  }
+  function readNotesHtml(d) {
+    if (!d || !d.ok || !(d.notes || []).length) return "";
+    return `<div class="ana-sect">📝 Read</div><ul class="ana-notes">` +
+      d.notes.map((n) => `<li>${esc(n)}</li>`).join("") + `</ul>`;
   }
 
   function fundTabHtml(f, sym) {
