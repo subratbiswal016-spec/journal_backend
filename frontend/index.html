@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Option OI Dashboard</title>
   <script>try{if(localStorage.getItem('oi-theme')==='light')document.documentElement.classList.add('light');}catch(e){}</script>
-  <link rel="stylesheet" href="style.css?v=45" />
+  <link rel="stylesheet" href="style.css?v=46" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
   <script src="app.js?v=9" defer></script>
-  <script src="journal.js?v=47" defer></script>
+  <script src="journal.js?v=48" defer></script>
 </head>
 <body>
   <aside class="sidebar" id="sidebar">
@@ -88,21 +88,27 @@
         <h2>📊 Trading Dashboard <span id="homeBusy" class="home-busy hidden"></span></h2>
         <div class="dash-actions">
           <button id="homeSyncBtn" class="jbtn primary" style="display:none" title="Pull today's trades from Fyers">⬇ Sync from Fyers</button>
-          <div class="dash-period" id="homePeriod">
-            <button class="dper active" data-p="all">All time</button>
-            <button class="dper" data-p="1w">1W</button>
-            <button class="dper" data-p="1m">1M</button>
-            <button class="dper" data-p="3m">3M</button>
-            <button class="dper" data-p="this_month">This month</button>
-            <span id="fySlot"></span>
-            <button class="dper" data-p="custom">📅 Custom</button>
+          <div class="date-filter">
+            <button id="dfBtn" class="jbtn df-btn" title="Date range"><span class="df-ico">⚙</span> <span id="dfLabel">All time</span> <span class="df-caret">▾</span></button>
+            <div id="dfMenu" class="df-menu hidden">
+              <div class="df-title">Date range</div>
+              <div class="dash-period dper-col" id="homePeriod">
+                <button class="dper active" data-p="all">All time</button>
+                <button class="dper" data-p="1w">Last week</button>
+                <button class="dper" data-p="1m">Last month</button>
+                <button class="dper" data-p="3m">Last 3 months</button>
+                <button class="dper" data-p="this_month">This month</button>
+                <span id="fySlot"></span>
+                <button class="dper" data-p="custom">Custom range…</button>
+              </div>
+              <div id="homeCustom" class="home-custom hidden">
+                <label>From <input type="date" id="homeCustStart" class="dinp" /></label>
+                <label>To <input type="date" id="homeCustEnd" class="dinp" /></label>
+                <button id="homeCustApply" class="jbtn primary">Apply</button>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
-      <div id="homeCustom" class="home-custom hidden">
-        <label>From <input type="date" id="homeCustStart" class="dinp" /></label>
-        <label>To <input type="date" id="homeCustEnd" class="dinp" /></label>
-        <button id="homeCustApply" class="jbtn primary">Apply</button>
       </div>
       <div id="homeSyncMsg" class="jnote hidden"></div>
       <div id="homeKpis" class="kpi-row"></div>

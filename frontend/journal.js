@@ -262,6 +262,24 @@
       for (let i = 0; i < 4; i++) { const y = cfy - i; html += `<button class="dper" data-p="fy:${y}">FY ${String(y).slice(2)}-${String(y + 1).slice(2)}</button>`; }
       slot.innerHTML = html;
     }
+    // Filter dropdown: open/close + outside-click / Escape close.
+    const dfMenu = $("dfMenu");
+    function closeDf() {
+      if (!dfMenu || dfMenu.classList.contains("hidden")) return;
+      dfMenu.classList.add("hidden");
+      document.querySelectorAll("#homePeriod .dper").forEach((x) => x.classList.toggle("active", x.dataset.p === homePeriod));
+      if ($("homeCustom")) $("homeCustom").classList.toggle("hidden", homePeriod !== "custom");
+    }
+    if ($("dfBtn")) $("dfBtn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!dfMenu) return;
+      if (dfMenu.classList.contains("hidden")) dfMenu.classList.remove("hidden");
+      else closeDf();
+    });
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest(".date-filter")) closeDf();
+    });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDf(); });
     // Delegate clicks so the injected FY buttons work too.
     if ($("homePeriod")) $("homePeriod").addEventListener("click", (e) => {
       const b = e.target.closest(".dper"); if (!b) return;
@@ -270,12 +288,18 @@
       const cust = $("homeCustom");
       if (p === "custom") { if (cust) cust.classList.remove("hidden"); return; } // wait for Apply
       if (cust) cust.classList.add("hidden");
+      if ($("dfLabel")) $("dfLabel").textContent = b.textContent.trim();
+      if (dfMenu) dfMenu.classList.add("hidden");
       homePeriod = p; calMonth = null; loadHome();
     });
     if ($("homeCustApply")) $("homeCustApply").addEventListener("click", () => {
       homeCustStart = $("homeCustStart").value; homeCustEnd = $("homeCustEnd").value;
       if (!homeCustStart && !homeCustEnd) { homeMsg("Pick a From and/or To date.", true); return; }
-      homePeriod = "custom"; calMonth = null; loadHome();
+      if (homeCustStart && homeCustEnd && homeCustStart > homeCustEnd) { homeMsg("From date must be on or before To date.", true); return; }
+      if ($("dfLabel")) $("dfLabel").textContent = (homeCustStart || "…") + " → " + (homeCustEnd || "…");
+      homePeriod = "custom"; calMonth = null;
+      if (dfMenu) dfMenu.classList.add("hidden");
+      loadHome();
     });
     if ($("calPrev")) $("calPrev").addEventListener("click", () => shiftCal(-1));
     if ($("calNext")) $("calNext").addEventListener("click", () => shiftCal(1));
@@ -427,14 +451,29 @@
       }
       weeks.push(col);
     }
-    let html = `<div class="heat" style="grid-template-columns:repeat(${weeks.length},14px)">`;
-    for (let r = 0; r < 7; r++) for (let w = 0; w < weeks.length; w++) {
-      const c = weeks[w][r];
-      if (c.v == null) html += `<div class="hc" title="${c.ds}"></div>`;
-      else { const op = (0.35 + Math.min(1, Math.abs(c.v) / maxAbs) * 0.65).toFixed(2);
-        html += `<div class="hc ${c.v >= 0 ? "g" : "r"}" style="opacity:${op}" title="${c.ds}: ₹${fmt(c.v, 0)}"></div>`; }
+    const dows = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    // first row of month labels aligned to week columns
+    let months = `<div class="hlbl"></div>`, lastM = -1;
+    for (let w = 0; w < weeks.length; w++) {
+      const d0 = weeks[w][0];
+      const mo = d0.ds ? +d0.ds.slice(5, 7) - 1 : -1;
+      months += (mo !== lastM) ? `<div class="hmon">${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][mo]}</div>` : `<div class="hmon"></div>`;
+      lastM = mo;
     }
-    html += `</div><div class="heat-leg"><span>Loss</span><i class="r"></i><i></i><i class="g"></i><span>Profit</span></div>`;
+    let html = `<div class="heat" style="grid-template-columns:auto repeat(${weeks.length},14px)">` + months;
+    for (let r = 0; r < 7; r++) {
+      html += `<div class="hlbl">${dows[r]}</div>`;              // weekday label
+      for (let w = 0; w < weeks.length; w++) {
+        const c = weeks[w][r];
+        if (c.v == null) { html += `<div class="hc" title="${c.ds}"></div>`; continue; }
+        // intensity scales with |P&L|: bigger profit/loss → stronger colour
+        const op = (0.2 + Math.min(1, Math.abs(c.v) / maxAbs) * 0.8).toFixed(2);
+        html += `<div class="hc ${c.v >= 0 ? "g" : "r"}" style="opacity:${op}" title="${c.ds}: ₹${fmt(c.v, 0)}"></div>`;
+      }
+    }
+    html += `</div><div class="heat-leg"><span>More loss</span>` +
+      `<i class="r" style="opacity:1"></i><i class="r" style="opacity:.5"></i><i></i>` +
+      `<i class="g" style="opacity:.5"></i><i class="g" style="opacity:1"></i><span>More profit</span></div>`;
     el.innerHTML = html;
   }
   const _clamp = (v) => Math.max(0, Math.min(100, v));
