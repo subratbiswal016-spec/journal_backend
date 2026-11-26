@@ -2,6 +2,7 @@
   --bg: #0b0e14;
   --panel: #141925;
   --panel-2: #1b2130;
+  --card: #141925;
   --line: #273041;
   --text: #e6e9ef;
   --muted: #8b95a7;
@@ -10,45 +11,96 @@
   --put: #26a69a;       /* puts = green (support) */
   --put-dim: rgba(38, 166, 154, 0.18);
   --accent: #5b8def;
+  --brand: #3b82f6;
   --warn: #e0a800;
   --atm: #2d3448;
 }
 
-/* ---------- light theme (toggle adds .light to <html>) ---------- */
+/* ---------- light theme (.light on <html>) ---------- */
 :root.light {
   --bg: #f3f5f8;
   --panel: #ffffff;
   --panel-2: #eef1f5;
+  --card: #ffffff;
   --line: #d9dee7;
   --text: #16202e;
   --muted: #5b6577;
   --accent: #3366dd;
+  --brand: #3b82f6;
   --warn: #a9730a;
   --atm: #e3e9f5;
 }
 .light .topbar { background: linear-gradient(180deg, #ffffff, #eef1f5); }
 .light .statusbar { background: #fff6e5; color: #9a6a00; border-bottom-color: #f0dca8; }
-.light .statusbar.error { background: #fdeaea; color: #c0392b; border-bottom-color: #f3c0c0; }
 .light .statusbar.info { background: #eaf1fb; color: #2b4c86; border-bottom-color: #cfe0ff; }
 .light .jnote { background: #eef4ff; border-color: #cfe0ff; color: #2b4c86; }
-.light .jnote.err { background: #fdeaea; border-color: #f3c0c0; color: #c0392b; }
 .light .jnote b { color: #16335f; }
-/* OI fill-bar % label: dark text (was white) so it reads on the light track */
-.light .tile .fillbar > .pct { color: #16202e; text-shadow: 0 1px 2px rgba(255,255,255,.75); }
-/* footer */
 .light footer { background: #eef1f5; }
-/* red accent text on light-red backgrounds → darker red for contrast */
-.light .rulebanner.bad, .light .jstatus.err, .light .wk-badge.miss,
-.light .wd-tag.worst, .light .login-hint.err { color: #c0392b; }
-.light .wd-tag.ok { color: #9a6a00; }
-/* teal accent text on light-teal backgrounds → darker teal */
-.light .wk-badge.done, .light .wd-tag.best { color: #0f766e; }
 
-.theme-btn {
-  background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
-  border-radius: 6px; padding: 5px 9px; cursor: pointer; font-size: 14px; line-height: 1;
+/* ---------- emerald theme (.emerald on <html>) ---------- */
+:root.emerald {
+  --bg: #07120e;
+  --panel: #0e1d17;
+  --panel-2: #152921;
+  --card: #0e1d17;
+  --line: #214034;
+  --text: #e4f3ec;
+  --muted: #84a99a;
+  --accent: #10b981;
+  --brand: #10b981;
+  --warn: #eab308;
+  --atm: #1c382d;
 }
-.theme-btn:hover { border-color: var(--accent); }
+.emerald .topbar { background: linear-gradient(180deg, #10241c, #091611); }
+.emerald .jnote { background: #102b22; border-color: #1f4f3f; color: #9ee6cc; }
+.emerald .jnote.err { background: #36191b; border-color: #5c2428; color: #ff8a80; }
+.emerald footer { background: #091611; }
+
+/* ---------- sand theme (.sand on <html>) ---------- */
+:root.sand {
+  --bg: #f5efe4;
+  --panel: #fffcf5;
+  --panel-2: #ece3d2;
+  --card: #fffcf5;
+  --line: #d8ccb8;
+  --text: #2a2118;
+  --muted: #756756;
+  --call: #c93b38;
+  --call-dim: rgba(201, 59, 56, 0.16);
+  --put: #15806f;
+  --put-dim: rgba(21, 128, 111, 0.16);
+  --accent: #c25e00;
+  --brand: #c25e00;
+  --warn: #9a6700;
+  --atm: #eadcc6;
+}
+.sand .topbar { background: linear-gradient(180deg, #fffcf5, #ece3d2); }
+.sand .statusbar { background: #fef3db; color: #8a5a00; border-bottom-color: #ebd29d; }
+.sand .statusbar.info { background: #f4ead8; color: #6e4710; border-bottom-color: #dfd0b4; }
+.sand .jnote { background: #f8efe0; border-color: #e2cfa9; color: #6e4710; }
+.sand .jnote b { color: #3d2506; }
+.sand footer { background: #ece3d2; }
+
+/* shared light-surface contrast adjustments (.light & .sand) */
+:is(.light, .sand) .statusbar.error { background: #fdeaea; color: #c0392b; border-bottom-color: #f3c0c0; }
+:is(.light, .sand) .jnote.err { background: #fdeaea; border-color: #f3c0c0; color: #c0392b; }
+/* OI fill-bar % label: dark text (was white) so it reads on the light track */
+:is(.light, .sand) .tile .fillbar > .pct { color: #16202e; text-shadow: 0 1px 2px rgba(255,255,255,.75); }
+/* red accent text on light-red backgrounds → darker red for contrast */
+:is(.light, .sand) .rulebanner.bad, :is(.light, .sand) .jstatus.err, :is(.light, .sand) .wk-badge.miss,
+:is(.light, .sand) .wd-tag.worst, :is(.light, .sand) .login-hint.err { color: #c0392b; }
+:is(.light, .sand) .wd-tag.ok { color: #9a6a00; }
+/* teal accent text on light-teal backgrounds → darker teal */
+:is(.light, .sand) .wk-badge.done, :is(.light, .sand) .wd-tag.best { color: #0f766e; }
+
+.theme-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.theme-btn {
+  background: var(--panel-2); color: var(--muted); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 8px; cursor: pointer; font-size: 12px; font-weight: 600;
+  line-height: 1.2; text-align: left; white-space: nowrap;
+}
+.theme-btn:hover { border-color: var(--accent); color: var(--text); }
+.theme-btn.active { background: var(--brand); border-color: var(--brand); color: #fff; }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; }
@@ -411,7 +463,7 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .df-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 70; width: 252px;
   max-width: calc(100vw - 24px); background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px;
   box-shadow: 0 16px 40px rgba(0,0,0,.4); }
-.light .df-menu { box-shadow: 0 12px 30px rgba(0,0,0,.14); }
+:is(.light, .sand) .df-menu { box-shadow: 0 12px 30px rgba(0,0,0,.14); }
 @media (max-width: 560px) { .df-menu { right: auto; left: 0; } }
 .df-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); margin: 0 0 8px; }
 .fy-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
@@ -430,7 +482,7 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 .home-custom label { display: flex; flex-direction: column; font-size: 11px; color: var(--muted); gap: 4px; }
 .dinp { padding: 8px 10px; border-radius: 8px; background: var(--panel-2); color: var(--text);
   border: 1px solid var(--line); font-size: 13px; color-scheme: dark; }
-.light .dinp { color-scheme: light; }
+:is(.light, .sand) .dinp { color-scheme: light; }
 .kpi-row { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 16px; }
 /* P&L & charges breakdown strip */
 .pnl-sum { display: flex; flex-wrap: wrap; background: var(--card, #fff); border: 1px solid var(--line);
@@ -529,7 +581,7 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
   .ana-chips { grid-template-columns: repeat(2, 1fr); }
   .ana-rets { grid-template-columns: repeat(3, 1fr); }
 }
-.light .sig.bull { color: #0f766e; } .light .sig.bear { color: #c0392b; }
+:is(.light, .sand) .sig.bull { color: #0f766e; } :is(.light, .sand) .sig.bear { color: #c0392b; }
 .pill.Bullish { background: var(--put-dim); color: var(--put); }
 .pill.Bearish { background: var(--call-dim); color: var(--call); }
 .pill.Neutral { background: var(--panel-2); color: var(--muted); }
@@ -607,7 +659,6 @@ footer {
 .sidebar .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .sidebar .tab-badge { margin-left: auto; }
 .sb-foot { margin-top: auto; padding-top: 10px; }
-.sb-foot .theme-btn { width: 100%; text-align: left; height: auto; padding: 9px 12px; border-radius: 9px; }
 .app-content { margin-left: 212px; min-height: 100vh; transition: margin-left .2s ease; }
 .sb-collapse { margin-left: auto; background: transparent; border: none; color: var(--muted);
   font-size: 18px; line-height: 1; cursor: pointer; padding: 2px 6px; border-radius: 6px; }

@@ -4,11 +4,11 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Option OI Dashboard</title>
-  <script>try{if(localStorage.getItem('oi-theme')==='light')document.documentElement.classList.add('light');}catch(e){}</script>
-  <link rel="stylesheet" href="style.css?v=48" />
+  <script>try{var t=localStorage.getItem('oi-theme');if(t==='light'||t==='emerald'||t==='sand')document.documentElement.classList.add(t);}catch(e){}</script>
+  <link rel="stylesheet" href="style.css?v=49" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
-  <script src="app.js?v=11" defer></script>
-  <script src="journal.js?v=50" defer></script>
+  <script src="app.js?v=12" defer></script>
+  <script src="journal.js?v=51" defer></script>
 </head>
 <body>
   <aside class="sidebar" id="sidebar">
@@ -27,7 +27,12 @@
       <button class="tab" data-view="rules">⚖ Rules</button>
     </nav>
     <div class="sb-foot">
-      <button id="themeBtn" class="theme-btn" title="Toggle light / dark theme">🌙 Theme</button>
+      <div class="theme-picker" id="themePicker" role="group" aria-label="Theme">
+        <button class="theme-btn" data-theme="dark" title="Dark theme">🌙 Dark</button>
+        <button class="theme-btn" data-theme="light" title="Light theme">☀️ Light</button>
+        <button class="theme-btn" data-theme="emerald" title="Emerald theme">🌲 Emerald</button>
+        <button class="theme-btn" data-theme="sand" title="Sand theme">🏜️ Sand</button>
+      </div>
     </div>
   </aside>
 

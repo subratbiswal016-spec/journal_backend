@@ -2613,6 +2613,11 @@
     } catch (e) { rulesSaveMsg("Save failed: " + e.message, true); }
   }
 
+  // Redraw dashboard charts when theme changes so grid/tick/series colors stay synced.
+  window.addEventListener("oi-theme-change", () => {
+    if (homeData && $("viewHome") && !$("viewHome").classList.contains("hidden")) renderHome(homeData);
+  });
+
   // Land on the analytics Dashboard once auth status allows (runs last, after all declarations exist).
   (window.__authReady || Promise.resolve(true)).then((ok) => {
     if (ok) switchView("home");

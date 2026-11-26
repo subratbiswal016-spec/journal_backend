@@ -414,16 +414,33 @@ function showStatus(msg, cls) {
   bar.textContent = msg;
 }
 
-// ---------- theme toggle (light / dark) ----------
+// ---------- theme switcher (dark / light / emerald / sand) ----------
 (function () {
-  const btn = document.getElementById("themeBtn");
-  if (!btn) return;
-  const setIcon = () => { btn.textContent = document.documentElement.classList.contains("light") ? "☀️" : "🌙"; };
-  setIcon();
-  btn.addEventListener("click", () => {
-    const light = document.documentElement.classList.toggle("light");
-    try { localStorage.setItem("oi-theme", light ? "light" : "dark"); } catch (e) { }
-    setIcon();
+  const picker = document.getElementById("themePicker");
+  if (!picker) return;
+  const THEMES = ["dark", "light", "emerald", "sand"];
+  const EXTRA = ["light", "emerald", "sand"];
+  const cur = () => {
+    for (const t of EXTRA) if (document.documentElement.classList.contains(t)) return t;
+    return "dark";
+  };
+  const sync = () => {
+    const active = cur();
+    picker.querySelectorAll("[data-theme]").forEach((b) =>
+      b.classList.toggle("active", b.dataset.theme === active));
+  };
+  const apply = (t) => {
+    if (!THEMES.includes(t)) t = "dark";
+    EXTRA.forEach((c) => document.documentElement.classList.remove(c));
+    if (t !== "dark") document.documentElement.classList.add(t);
+    try { localStorage.setItem("oi-theme", t); } catch (e) { }
+    sync();
+    try { window.dispatchEvent(new CustomEvent("oi-theme-change", { detail: t })); } catch (e) { }
+  };
+  sync();
+  picker.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-theme]");
+    if (b) apply(b.dataset.theme);
   });
 })();
 
