@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Option OI Dashboard</title>
   <script>try{if(localStorage.getItem('oi-theme')==='light')document.documentElement.classList.add('light');}catch(e){}</script>
-  <link rel="stylesheet" href="style.css?v=39" />
+  <link rel="stylesheet" href="style.css?v=40" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
   <script src="app.js?v=9" defer></script>
-  <script src="journal.js?v=39" defer></script>
+  <script src="journal.js?v=40" defer></script>
 </head>
 <body>
   <aside class="sidebar" id="sidebar">
@@ -35,10 +35,14 @@
   <header class="topbar">
     <button id="sbToggle" class="sb-toggle" title="Menu" aria-label="Menu">☰</button>
     <div class="hsearch">
-      <input id="stockSearch" type="search" name="stocksearch" placeholder="🔍 Search a stock…"
-             autocomplete="off" autocapitalize="off" spellcheck="false"
+      <!-- off-screen decoys absorb Chrome's saved-password autofill so it never targets the search box -->
+      <input class="hs-decoy" type="text" tabindex="-1" aria-hidden="true" autocomplete="username" />
+      <input class="hs-decoy" type="password" tabindex="-1" aria-hidden="true" autocomplete="current-password" />
+      <span class="hs-icon" aria-hidden="true">🔍</span>
+      <input id="stockSearch" type="text" name="q_find" placeholder="Search a stock…"
+             autocomplete="off" autocapitalize="off" spellcheck="false" role="combobox"
              data-lpignore="true" data-1p-ignore data-form-type="other" aria-autocomplete="list"
-             readonly onfocus="this.removeAttribute('readonly')" />
+             readonly onfocus="setTimeout(()=>this.removeAttribute('readonly'),60)" />
       <div id="stockSearchResults" class="hsearch-results hidden"></div>
     </div>
     <div class="controls" id="oiControls">

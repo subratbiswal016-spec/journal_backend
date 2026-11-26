@@ -192,12 +192,14 @@ main { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; max
 #screenerTable td:last-child .sig { margin: 1px 2px 1px 0; }
 
 /* --- header stock search --- */
-.hsearch { position: relative; margin-left: auto; }
-.hsearch input { width: 220px; max-width: 46vw; padding: 8px 12px; font-size: 13px;
-  border-radius: 9px; background: var(--panel-2); color: var(--text);
-  border: 1px solid var(--line); outline: none; }
-.hsearch input:focus { border-color: var(--accent, #6ea8fe); }
-.hsearch input::placeholder { color: var(--muted); }
+.hsearch { position: relative; margin-left: auto; display: flex; align-items: center; }
+.hs-decoy { position: absolute; left: -9999px; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.hs-icon { position: absolute; left: 12px; font-size: 13px; opacity: .65; pointer-events: none; }
+.hsearch input#stockSearch { width: 250px; max-width: 46vw; padding: 9px 14px 9px 34px; font-size: 13px;
+  border-radius: 10px; background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--line); outline: none; transition: border-color .15s, box-shadow .15s; }
+.hsearch input#stockSearch:focus { border-color: var(--accent, #6ea8fe); box-shadow: 0 0 0 3px rgba(110,168,254,.18); }
+.hsearch input#stockSearch::placeholder { color: var(--muted); }
 .hsearch-results { position: absolute; z-index: 60; top: calc(100% + 6px); right: 0; left: 0;
   background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 5px;
   box-shadow: 0 12px 30px rgba(0,0,0,.4); max-height: 320px; overflow-y: auto; }

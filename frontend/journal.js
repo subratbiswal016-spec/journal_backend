@@ -174,9 +174,11 @@
       row("Subscription", st, (x.sub >= 1 ? "pos" : "")) +
       row("Issue size", x.issue_size ? Number(x.issue_size).toLocaleString("en-IN") + " shares" : "—") +
       `</div>`;
-    const url = "https://www.nseindia.com/market-data/all-upcoming-issues-ipo";
-    html += `<a class="ana-report" href="${url}" target="_blank" rel="noopener noreferrer">📋 Full details, GMP &amp; lot size on NSE ↗</a>`;
-    html += `<p class="ana-src">Data from NSE. Dates/price band as published — <b>not an offer or advice</b> to apply.</p>`;
+    // Jump straight to the IPO's detail page (GMP, lot size, subscription, allotment)
+    const q = encodeURIComponent((x.name || x.symbol || "") + " IPO GMP lot size chittorgarh");
+    const url = "https://duckduckgo.com/?q=!ducky+" + q;
+    html += `<a class="ana-report" href="${url}" target="_blank" rel="noopener noreferrer">🔎 Full details, GMP &amp; lot size, allotment ↗</a>`;
+    html += `<p class="ana-src">Opens the IPO's detail page (GMP, lot size, dates). Data as published — <b>not an offer or advice</b> to apply.</p>`;
     $("ipoModalBody").innerHTML = html;
     $("ipoModal").classList.remove("hidden");
   }
