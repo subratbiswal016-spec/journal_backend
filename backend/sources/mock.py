@@ -31,7 +31,10 @@ class MockDataSource(DataSource):
     name = "mock"
 
     def get_profile(self) -> dict:
-        return {"name": "Demo Trader", "user_id": "DEMO-01", "email": "", "avatar": "", "broker": "Demo"}
+        return {
+            "name": "Demo Trader", "user_id": "DEMO-01", "email": "demo@local", "avatar": "", "broker": "Demo",
+            "details": [["Client ID", "DEMO-01"], ["Mode", "Sandbox / Demo Data"], ["Starting Funds", "₹1,00,000"]],
+        }
 
     def get_funds(self) -> dict:
         return {"opening": 100000.0, "available": 100000.0, "total": 100000.0}

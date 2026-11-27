@@ -188,12 +188,26 @@ class UpstoxDataSource(DataSource):
             return self._profile
         body = self._get(API + "/user/profile", {})
         d = body.get("data") or {}
+        details = []
+        if d.get("user_id"):
+            details.append(["Client ID", str(d["user_id"])])
+        if d.get("exchanges"):
+            details.append(["Exchanges", ", ".join(str(x) for x in d["exchanges"])])
+        if d.get("products"):
+            details.append(["Products", ", ".join(str(x) for x in d["products"])])
+        if d.get("ddpi") is not None:
+            details.append(["DDPI", "Active" if d.get("ddpi") else "Inactive"])
+        if d.get("poa") is not None:
+            details.append(["POA", "Active" if d.get("poa") else "Inactive"])
+        if d.get("is_active") is not None:
+            details.append(["Account", "Active" if d.get("is_active") else "Inactive"])
         prof = {
             "name": (d.get("user_name") or d.get("user_id") or "Upstox Trader").strip(),
             "user_id": (d.get("user_id") or "").strip(),
             "email": (d.get("email") or "").strip(),
             "avatar": "",
             "broker": "Upstox",
+            "details": details,
         }
         self._profile = prof
         self._profile_token = self._token

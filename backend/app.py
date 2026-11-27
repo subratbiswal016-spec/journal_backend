@@ -255,16 +255,66 @@ def auth_callback(code: Optional[str] = None, auth_code: Optional[str] = None,
 
 @app.get("/api/profile")
 def api_profile():
-    """Return the logged-in broker user's profile (name, id, email, avatar)."""
+    """Return the logged-in broker user's profile (name, id, email, avatar, details)."""
+    custom = jstore.get_setting(f"profile_custom:{_source.name}", {}) or {}
+    cname = (custom.get("name") or "").strip()
+    cavatar = (custom.get("avatar") or "").strip()
     if _source.needs_login():
         return {"logged_in": False, "source": _source.name}
     try:
-        prof = _source.get_profile()
-    except AuthRequired:
-        return {"logged_in": False, "source": _source.name}
+        prof = dict(_source.get_profile() or {})
+    except AuthRequired as e:
+        cid = jdhan.get_creds()[0] if _source.name == "dhan" else ""
+        if _source.name == "dhan" and not cid:
+            # decode client id claim from Dhan JWT payload if available
+            try:
+                import base64, json as _js
+                tok = jdhan.get_creds()[1]
+                part = tok.split(".")[1] + "=="
+                cid = str((_js.loads(base64.urlsafe_b64decode(part)) or {}).get("dhanClientId") or "")
+            except Exception:  # noqa: BLE001
+                cid = ""
+        return {
+            "logged_in": True,
+            "token_expired": True,
+            "source": _source.name,
+            "broker": _source.name.upper(),
+            "name": cname or (f"{_source.name.upper()} {cid}".strip() if cid else f"{_source.name.upper()} Account"),
+            "user_id": cid,
+            "email": "",
+            "avatar": cavatar,
+            "details": [x for x in ([["Client ID", cid]] if cid else [])] + [["Session", "Token expired — reconnect"]],
+            "error": str(e),
+        }
     except Exception:  # noqa: BLE001 - best-effort profile metadata
-        prof = {"name": _source.name.upper() + " Trader", "user_id": "", "email": "", "avatar": "", "broker": _source.name.upper()}
-    return {"logged_in": True, "source": _source.name, **(prof or {})}
+        prof = {"name": _source.name.upper() + " Account", "user_id": "", "email": "", "avatar": "", "broker": _source.name.upper(), "details": []}
+
+    details = list(prof.get("details") or [])
+    funds = _cached_broker_funds()
+    if funds and funds.get("available") is not None:
+        avail = float(funds["available"])
+        details.append(["Available Funds", f"₹{avail:,.2f}"])
+    prof["details"] = details
+    if cname:
+        prof["name"] = cname
+    if cavatar:
+        prof["avatar"] = cavatar
+    prof["needs_custom_name"] = bool(_source.name == "dhan" and not cname)
+    return {"logged_in": True, "token_expired": False, "source": _source.name, **prof}
+
+
+@app.post("/api/profile/custom")
+async def api_profile_custom(request: Request):
+    """Save optional display name & photo URL for the active broker profile."""
+    data = await request.json()
+    key = f"profile_custom:{_source.name}"
+    cur = jstore.get_setting(key, {}) or {}
+    if "name" in data:
+        cur["name"] = str(data.get("name") or "").strip()[:60]
+    if "avatar" in data:
+        cur["avatar"] = str(data.get("avatar") or "").strip()[:45000]
+    jstore.set_setting(key, cur)
+    return {"ok": True}
 
 
 @app.post("/api/auth/logout")
@@ -845,10 +895,31 @@ _IDX_YAHOO = {
 }
 
 
-def _yahoo_intraday(underlying: str, day: str) -> dict | None:
-    """Best-effort 5-min OHLC candles and prior-day classic pivots for `underlying` on `day`."""
+def _extract_underlying_symbol(sym: str) -> str:
+    """Extract clean spot/underlying symbol from Fyers, Dhan, or spaced F&O names."""
+    import re as _re
+    s = (sym or "").strip().upper()
+    if ":" in s:
+        s = s.split(":", 1)[1]
+    s = _re.sub(r"-(EQ|BE|BL)$", "", s)
+    for idx in ("BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50", "BANKEX", "SENSEX", "NIFTY"):
+        if s.startswith(idx):
+            return idx
+    if " " in s:
+        return s.split()[0]
+    if "-" in s:
+        return s.split("-")[0]
+    m = _re.match(r"^([A-Z]+?)(?:\d{2}[A-Z]{3}|\d{4,}(?:CE|PE|FUT)?$)", s)
+    if m:
+        return m.group(1)
+    return s or "OTHER"
+
+
+def _yahoo_intraday(underlying: str, day: str, interval: str = "5m") -> dict | None:
+    """Best-effort intraday OHLC candles and prior-day classic pivots for `underlying` on `day`."""
     import requests as _req
     ysym = _IDX_YAHOO.get(underlying, f"{underlying}.NS")
+    iv = interval if interval in ("1m", "2m", "5m", "15m", "60m") else "5m"
     try:
         dt = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=_IST)
         if (datetime.now(_IST) - dt).days > 58:
@@ -857,7 +928,7 @@ def _yahoo_intraday(underlying: str, day: str) -> dict | None:
         p2 = int((dt + timedelta(days=1)).timestamp())
         r = _req.get(
             f"https://query1.finance.yahoo.com/v8/finance/chart/{ysym}",
-            params={"interval": "5m", "period1": p1, "period2": p2},
+            params={"interval": iv, "period1": p1, "period2": p2},
             headers={"User-Agent": "Mozilla/5.0"},
             timeout=7,
         )
@@ -914,11 +985,223 @@ def _yahoo_intraday(underlying: str, day: str) -> dict | None:
 
 _DHAN_SEC_ID = {"NIFTY": ("13", "NSE_FNO"), "BANKNIFTY": ("25", "NSE_FNO"), "SENSEX": ("51", "BSE_FNO")}
 _DHAN_PLAN_CACHE: dict[str, tuple[float, bool]] = {}
+_GROWW_CONTRACT_CACHE: dict[tuple[str, str], tuple[float, tuple[str, str, str] | None]] = {}
+_MON_ABBR = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
+             "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12}
+
+
+def _parse_option_spec(sym: str, expiry_hint: str = "", ref_day: str = "") -> dict | None:
+    """Parse underlying, strike, option type, exchange, and expiry status from any F&O symbol."""
+    import re as _re
+    s = (sym or "").strip().upper()
+    if not s:
+        return None
+    und = _extract_underlying_symbol(s)
+    exch = "BSE" if (und in ("SENSEX", "BANKEX") or s.startswith(("BSE:", "BFO:"))) else "NSE"
+
+    # Match option type + strike
+    strike = ""
+    opt_type = ""
+    # 1. Dhan hyphenated: SENSEX-Dec2026-83700-CE
+    m_dhan = _re.search(r"-([A-Z]{3})(\d{4})-(\d+(?:\.\d+)?)-(CE|PE)$", s)
+    if m_dhan:
+        opt_type = m_dhan.group(4)
+        strike = m_dhan.group(3)
+        mon_num = _MON_ABBR.get(m_dhan.group(1), 0)
+        yr_num = int(m_dhan.group(2))
+    else:
+        mon_num, yr_num = 0, 0
+        # 2. Spaced: NIFTY 19 OCT 23600 CALL
+        m_sp = _re.search(r"\b(\d{1,2})\s+([A-Z]{3})\s+(\d+(?:\.\d+)?)\s+(CALL|PUT|CE|PE)\b", s)
+        if m_sp:
+            opt_type = "CE" if m_sp.group(4) in ("CALL", "CE") else "PE"
+            strike = m_sp.group(3)
+            mon_num = _MON_ABBR.get(m_sp.group(2), 0)
+        else:
+            # 3. Fyers / NSE compact: SENSEX26DEC83700CE or NIFTY26D0125800CE or NIFTY26NOV25800CE
+            m_cmp = _re.search(r"(\d{2})([A-Z]{3}|[OND]\d{2}|[1-9]\d{2})(\d{3,6})(CE|PE)$", s)
+            if m_cmp:
+                yr_num = 2000 + int(m_cmp.group(1))
+                code = m_cmp.group(2)
+                if code in _MON_ABBR:
+                    mon_num = _MON_ABBR[code]
+                elif code[0] in ("O", "N", "D"):
+                    mon_num = {"O": 10, "N": 11, "D": 12}[code[0]]
+                elif code[0].isdigit():
+                    mon_num = int(code[0])
+                strike = m_cmp.group(3)
+                opt_type = m_cmp.group(4)
+
+    if not opt_type or not strike:
+        return None
+    if strike.endswith(".0"):
+        strike = strike[:-2]
+
+    now_d = datetime.now(_IST).strftime("%Y-%m-%d")
+    exp = (expiry_hint or "").strip()
+    is_expired = False
+    if len(exp) == 10 and exp[4] == "-":
+        is_expired = exp < now_d
+    elif ref_day and len(ref_day) == 10 and mon_num:
+        # e.g. spaced "19 OCT" + ref_day
+        m_dd = _re.search(r"\b(\d{1,2})\s+[A-Z]{3}\b", s)
+        if m_dd:
+            y_guess = int(ref_day[:4]) if not yr_num else yr_num
+            exp = f"{y_guess:04d}-{mon_num:02d}-{int(m_dd.group(1)):02d}"
+            is_expired = exp < now_d
+    elif yr_num and mon_num:
+        now_dt = datetime.now(_IST)
+        is_expired = (yr_num, mon_num) < (now_dt.year, now_dt.month)
+
+    return {
+        "underlying": und,
+        "exchange": exch,
+        "strike": strike,
+        "opt_type": opt_type,
+        "expiry": exp,
+        "month": mon_num,
+        "year": yr_num,
+        "is_expired": is_expired,
+    }
+
+
+def _groww_resolve_contract(spec: dict) -> tuple[str, str, str] | None:
+    """Resolve an active index/equity option contract ID on Groww public search."""
+    import time as _t
+    import requests as _req
+    exp_hint = spec.get("expiry") or ""
+    key = (f"{spec['underlying']}:{spec['strike']}:{spec['opt_type']}:{spec.get('month', 0)}:{spec.get('year', 0)}", exp_hint)
+    cached = _GROWW_CONTRACT_CACHE.get(key)
+    if cached and (_t.time() - cached[0]) < 1800:
+        return cached[1]
+    q = f"{spec['underlying']} {spec['strike']} {spec['opt_type']}"
+    today_s = datetime.now(_IST).strftime("%Y-%m-%d")
+    try:
+        r = _req.get(
+            "https://groww.in/v1/api/search/v1/entity",
+            params={"q": q, "size": 10},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=6,
+        )
+        if r.status_code != 200:
+            return None
+        items = [
+            c for c in ((r.json() or {}).get("content") or [])
+            if str(c.get("entity_type") or "") == "Option"
+            and str(c.get("option_type") or "").upper() == spec["opt_type"]
+            and str(c.get("exchange") or "").upper() == spec["exchange"]
+            and (c.get("groww_contract_id") or c.get("id"))
+        ]
+        if not items:
+            _GROWW_CONTRACT_CACHE[key] = (_t.time(), None)
+            return None
+        chosen = None
+        if exp_hint:
+            chosen = next((c for c in items if c.get("expiry") == exp_hint), None)
+        if not chosen and spec.get("year") and spec.get("month"):
+            ym = f"{spec['year']:04d}-{spec['month']:02d}-"
+            same_ym = [c for c in items if str(c.get("expiry") or "").startswith(ym)]
+            if same_ym:
+                future_ym = sorted((c for c in same_ym if (c.get("expiry") or "") >= today_s), key=lambda x: x.get("expiry") or "")
+                chosen = future_ym[0] if future_ym else same_ym[0]
+        if not chosen:
+            future = sorted((c for c in items if (c.get("expiry") or "") >= today_s), key=lambda x: x.get("expiry") or "")
+            chosen = future[0] if future else items[0]
+        res = (
+            str(chosen.get("exchange") or spec["exchange"]).upper(),
+            str(chosen.get("groww_contract_id") or chosen.get("id")),
+            str(chosen.get("expiry") or ""),
+        )
+        _GROWW_CONTRACT_CACHE[key] = (_t.time(), res)
+        return res
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _fetch_public_option_data(sym: str, day: str, interval: str = "5", expiry_hint: str = "") -> dict | None:
+    """Fetch live/intraday option OHLC candles + LTP for an active (non-expired) contract."""
+    import requests as _req
+    spec = _parse_option_spec(sym, expiry_hint=expiry_hint, ref_day=day)
+    if not spec:
+        return None
+    if spec["is_expired"]:
+        return {"expired": True, "expiry": spec["expiry"], "candles": [], "quote": None}
+    resolved = _groww_resolve_contract(spec)
+    if not resolved:
+        return None
+    exch, cid, res_exp = resolved
+    today_s = datetime.now(_IST).strftime("%Y-%m-%d")
+    if res_exp and res_exp < today_s:
+        return {"expired": True, "expiry": res_exp, "candles": [], "quote": None}
+
+    iv = int(interval) if str(interval) in ("1", "5", "15", "60") else 5
+    try:
+        dt = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=_IST)
+    except ValueError:
+        dt = datetime.now(_IST)
+    p1 = int((dt - timedelta(days=3)).timestamp() * 1000)
+    p2 = int((dt + timedelta(days=1)).timestamp() * 1000)
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    candles: list[dict] = []
+    try:
+        rc = _req.get(
+            f"https://groww.in/v1/api/stocks_fo_data/v1/charting_service/chart/exchange/{exch}/segment/FNO/{cid}",
+            params={"startTimeInMillis": p1, "endTimeInMillis": p2, "intervalInMinutes": iv},
+            headers=headers,
+            timeout=7,
+        )
+        if rc.status_code == 200:
+            raw = (rc.json() or {}).get("candles") or []
+            by_day: dict[str, list[dict]] = {}
+            for row in raw:
+                if not isinstance(row, (list, tuple)) or len(row) < 5:
+                    continue
+                if None in row[1:5]:
+                    continue
+                ts_val = int(row[0])
+                if ts_val > 10_000_000_000:
+                    ts_val //= 1000
+                d_ist = datetime.fromtimestamp(ts_val, _IST)
+                d_str = d_ist.strftime("%Y-%m-%d")
+                by_day.setdefault(d_str, []).append({
+                    "ts": ts_val,
+                    "t": d_ist.strftime("%H:%M"),
+                    "o": round(float(row[1]), 2),
+                    "h": round(float(row[2]), 2),
+                    "l": round(float(row[3]), 2),
+                    "c": round(float(row[4]), 2),
+                })
+            candles = by_day.get(day) or (by_day[max(by_day)] if by_day else [])
+    except Exception:  # noqa: BLE001
+        candles = []
+
+    quote = None
+    try:
+        rq = _req.get(
+            f"https://groww.in/v1/api/stocks_fo_data/v1/tr_live_prices/exchange/{exch}/segment/FNO/{cid}/latest",
+            headers=headers,
+            timeout=5,
+        )
+        if rq.status_code == 200:
+            q = rq.json() or {}
+            if q.get("ltp") is not None:
+                quote = {
+                    "ltp": round(float(q.get("ltp") or 0), 2),
+                    "open": round(float(q.get("open") or 0), 2) if q.get("open") is not None else None,
+                    "high": round(float(q.get("high") or 0), 2) if q.get("high") is not None else None,
+                    "low": round(float(q.get("low") or 0), 2) if q.get("low") is not None else None,
+                    "close": round(float(q.get("close") or 0), 2) if q.get("close") is not None else None,
+                }
+    except Exception:  # noqa: BLE001
+        quote = None
+
+    return {"expired": False, "expiry": res_exp or spec["expiry"], "contract_id": cid, "candles": candles, "quote": quote}
 
 
 def _dhan_has_data_plan() -> bool:
     import time as _t
-    tok, _ = jdhan.get_creds()
+    _, tok = jdhan.get_creds()
     if not tok:
         return False
     key = tok[:16]
@@ -1021,6 +1304,10 @@ def journal_trade_chart(
             candles = []
     elif _source.name == "dhan" and sym and date and date != "unknown":
         candles = _dhan_option_ohlc(sym, date)
+        if not candles:
+            pub = _fetch_public_option_data(sym, date, interval="5")
+            if pub and not pub.get("expired"):
+                candles = pub.get("candles") or []
     elif _source.name == "mock" and entry_price is not None and exit_price is not None:
         import random
         rng = random.Random(sum(ord(c) for c in sym + date))
@@ -1295,6 +1582,298 @@ async def journal_set_daynote(request: Request):
         raise HTTPException(status_code=400, detail="date required")
     janalytics.set_day_note(day, data.get("note") or "")
     return {"ok": True}
+
+
+# ---------------------------------------------------------------- Trade Mode
+@app.get("/api/trademode")
+def api_trademode():
+    """Live trading snapshot (today P&L, funds, positions, orders, trades, holdings)
+    for supported brokers (Fyers & Dhan)."""
+    try:
+        return _source.get_trade_snapshot()
+    except AuthRequired as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Trade Mode failed: {e}")
+
+
+@app.get("/api/trademode/reports")
+def api_trademode_reports():
+    try:
+        return _source.get_trade_reports()
+    except AuthRequired as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Reports failed: {e}")
+
+
+@app.post("/api/trademode/cancel-order")
+async def api_trademode_cancel_order(request: Request):
+    data = await request.json()
+    oid = str(data.get("id") or "").strip()
+    if not oid:
+        raise HTTPException(status_code=400, detail="order id required")
+    fn = getattr(_source, "cancel_order", None)
+    if not callable(fn):
+        raise HTTPException(status_code=400, detail="Order cancellation not supported on this broker")
+    try:
+        return {"ok": True, "result": fn(oid)}
+    except AuthRequired as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Cancel failed: {e}")
+
+
+@app.post("/api/trademode/exit-position")
+async def api_trademode_exit_position(request: Request):
+    data = await request.json()
+    pid = (str(data.get("id")).strip() if data.get("id") else None)
+    fn = getattr(_source, "exit_position", None)
+    if not callable(fn):
+        raise HTTPException(status_code=400, detail="Position exit not supported on this broker")
+    try:
+        return {"ok": True, "result": fn(
+            pid,
+            symbol=data.get("symbol"),
+            security_id=data.get("security_id"),
+        )}
+    except AuthRequired as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Exit position failed: {e}")
+
+
+@app.post("/api/trademode/reverse-position")
+async def api_trademode_reverse_position(request: Request):
+    data = await request.json()
+    fn = getattr(_source, "reverse_position", None)
+    if not callable(fn):
+        raise HTTPException(status_code=400, detail="Position reversal not supported on this broker")
+    try:
+        return {"ok": True, "result": fn(
+            pos_id=data.get("id"),
+            symbol=data.get("symbol"),
+            security_id=data.get("security_id"),
+            qty=int(data.get("qty") or 0),
+        )}
+    except AuthRequired as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Reverse position failed: {e}")
+
+
+@app.post("/api/trademode/sl-target")
+async def api_trademode_sl_target(request: Request):
+    data = await request.json()
+    fn = getattr(_source, "place_sl_target", None)
+    if not callable(fn):
+        raise HTTPException(status_code=400, detail="SL/Target placement not supported on this broker")
+    try:
+        return {"ok": True, "result": fn(
+            pos_id=data.get("id"),
+            symbol=data.get("symbol"),
+            security_id=data.get("security_id"),
+            exchange_segment=data.get("exchange_segment"),
+            product=data.get("product"),
+            side=data.get("side"),
+            qty=int(data.get("qty") or 0),
+            target_price=float(data.get("target_price") or 0),
+            sl_price=float(data.get("sl_price") or 0),
+            sl_limit_price=float(data.get("sl_limit_price") or 0),
+            trailing_jump=float(data.get("trailing_jump") or 0),
+        )}
+    except AuthRequired as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"SL/Target failed: {e}")
+
+
+@app.post("/api/trademode/modify-order")
+async def api_trademode_modify_order(request: Request):
+    data = await request.json()
+    oid = str(data.get("id") or "").strip()
+    if not oid:
+        raise HTTPException(status_code=400, detail="order id required")
+    fn = getattr(_source, "modify_order", None)
+    if not callable(fn):
+        raise HTTPException(status_code=400, detail="Order modification not supported on this broker")
+    try:
+        return {"ok": True, "result": fn(
+            order_id=oid,
+            order_type=str(data.get("order_type") or "LIMIT"),
+            qty=int(data.get("qty") or 1),
+            price=float(data.get("price") or 0),
+            stop_price=float(data.get("stop_price") or 0),
+            validity=str(data.get("validity") or "DAY"),
+            take_profit=float(data.get("take_profit") or 0),
+            stop_loss=float(data.get("stop_loss") or 0),
+        )}
+    except AuthRequired as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Modify order failed: {e}")
+
+
+@app.post("/api/trademode/place-order")
+async def api_trademode_place_order(request: Request):
+    data = await request.json()
+    fn = getattr(_source, "place_order", None)
+    if not callable(fn):
+        raise HTTPException(status_code=400, detail="Order placement not supported on this broker")
+    try:
+        return {"ok": True, "result": fn(
+            symbol=str(data.get("symbol") or ""),
+            security_id=str(data.get("security_id") or ""),
+            exchange_segment=str(data.get("exchange_segment") or ""),
+            side=str(data.get("side") or "BUY"),
+            qty=int(data.get("qty") or 1),
+            product=str(data.get("product") or "INTRADAY"),
+            order_type=str(data.get("order_type") or "MARKET"),
+            price=float(data.get("price") or 0),
+            stop_price=float(data.get("stop_price") or 0),
+            target_price=float(data.get("target_price") or 0),
+            sl_price=float(data.get("sl_price") or 0),
+            trailing_jump=float(data.get("trailing_jump") or 0),
+        )}
+    except AuthRequired as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Place order failed: {e}")
+
+
+@app.get("/api/trademode/inspect")
+def api_trademode_inspect(
+    symbol: str = Query(...),
+    date: str = Query(""),
+    timeframe: str = Query("5"),
+    sec_id: str = Query(""),
+    exchange_segment: str = Query(""),
+    expiry: str = Query(""),
+):
+    """Fetch live intraday chart candles, underlying chart/pivots, and live quote
+    for inspecting any Trade Mode position, order, or trade."""
+    sym = (symbol or "").strip()
+    day = (date or "").strip() or datetime.now(_IST).strftime("%Y-%m-%d")
+    tf = timeframe if timeframe in ("1", "5", "15", "60") else "5"
+    und = _extract_underlying_symbol(sym)
+    is_fno = (" " in sym) or sym.upper().endswith(("CE", "PE", "FUT", "CALL", "PUT")) or ("-" in sym and any(c.isdigit() for c in sym))
+
+    quote = None
+    qfn = getattr(_source, "get_live_quote", None)
+    if callable(qfn):
+        try:
+            quote = qfn(symbol=sym, security_id=sec_id, exchange_segment=exchange_segment)
+        except Exception:  # noqa: BLE001
+            quote = None
+
+    candles: list[dict] = []
+    contract_exp = (expiry or "").strip()
+    is_expired = False
+
+    if _source.name == "fyers" and sym:
+        try:
+            raw = (_source.fetch_fno_history(sym, day, resolution=tf)
+                   if is_fno and hasattr(_source, "fetch_fno_history")
+                   else _source.fetch_history(sym, resolution=tf, days=2))
+            for c in raw or []:
+                if len(c) >= 5:
+                    ts_int = int(c[0])
+                    d_ist = datetime.fromtimestamp(ts_int, _IST)
+                    if d_ist.strftime("%Y-%m-%d") == day:
+                        candles.append({
+                            "ts": ts_int, "t": d_ist.strftime("%H:%M"),
+                            "o": round(float(c[1]), 2), "h": round(float(c[2]), 2),
+                            "l": round(float(c[3]), 2), "c": round(float(c[4]), 2),
+                        })
+        except Exception:  # noqa: BLE001
+            candles = []
+    elif _source.name == "dhan" and sec_id and exchange_segment:
+        try:
+            if _dhan_has_data_plan():
+                inst = "OPTIDX" if ("FNO" in exchange_segment and is_fno) else ("FUTIDX" if "FUT" in sym.upper() else "EQUITY")
+                next_day = (datetime.strptime(day, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+                candles = jdhan.fetch_intraday_candles(sec_id, exchange_segment, inst, day, next_day, interval=tf)
+        except Exception:  # noqa: BLE001
+            candles = []
+
+    if is_fno:
+        pub = _fetch_public_option_data(sym, day, interval=tf, expiry_hint=contract_exp)
+        if pub:
+            is_expired = bool(pub.get("expired"))
+            contract_exp = pub.get("expiry") or contract_exp
+            if not is_expired and not candles:
+                candles = pub.get("candles") or []
+            if (not quote or not quote.get("ltp")) and pub.get("quote"):
+                quote = pub["quote"]
+    if is_expired:
+        candles = []
+
+    underlying = None
+    if und and und != "OTHER":
+        underlying = _yahoo_intraday(und, day, interval=f"{tf}m")
+        if not candles and not is_fno and underlying:
+            candles = underlying.get("points") or []
+
+    note = ""
+    if candles and is_fno:
+        exp_txt = f" · Exp {contract_exp}" if contract_exp else ""
+        note = f"Showing live {tf}m Option Chart{exp_txt} (switches to {und} Spot Chart after expiry)."
+    elif not candles and underlying:
+        note = (
+            f"Contract expired ({contract_exp}) — showing {und} {tf}m Spot OHLC & classic Pivots."
+            if is_expired and contract_exp else
+            f"Showing {und} {tf}m Spot OHLC & classic Pivots"
+            + (f" · Contract LTP ₹{quote['ltp']}" if quote and quote.get("ltp") else "")
+        )
+    elif not candles:
+        note = "Intraday candles unavailable right now (market closed or symbol not charted)."
+
+    return {
+        "symbol": sym,
+        "underlying_symbol": und,
+        "date": day,
+        "timeframe": tf,
+        "expiry": contract_exp,
+        "is_expired": is_expired,
+        "quote": quote,
+        "candles": candles,
+        "underlying": underlying,
+        "note": note,
+    }
+
+
+@app.post("/api/trademode/killswitch")
+async def api_trademode_killswitch(request: Request):
+    data = await request.json()
+    st = str(data.get("status") or "ACTIVATE").upper()
+    fn = getattr(_source, "set_killswitch", None)
+    if not callable(fn):
+        raise HTTPException(status_code=400, detail="Kill Switch is only supported on Dhan")
+    try:
+        return {"ok": True, "result": fn(st)}
+    except AuthRequired as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Kill Switch failed: {e}")
+
+
+@app.post("/api/trademode/pnl-exit")
+async def api_trademode_pnl_exit(request: Request):
+    data = await request.json()
+    fn = getattr(_source, "set_pnl_exit", None)
+    if not callable(fn):
+        raise HTTPException(status_code=400, detail="P&L Auto-Exit is only supported on Dhan")
+    try:
+        return {"ok": True, "result": fn(
+            float(data.get("profit_value") or 0),
+            float(data.get("loss_value") or 0),
+            bool(data.get("enable_kill_switch")),
+            active=bool(data.get("active", True)),
+        )}
+    except AuthRequired as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"P&L Exit update failed: {e}")
 
 
 # Serve index.html with no-cache so structural HTML changes (and the ?v= asset

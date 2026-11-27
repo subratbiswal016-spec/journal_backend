@@ -39,7 +39,10 @@ class NSEDataSource(DataSource):
     name = "nse"
 
     def get_profile(self) -> dict:
-        return {"name": "NSE Guest", "user_id": "", "email": "", "avatar": "", "broker": "NSE"}
+        return {
+            "name": "NSE Guest", "user_id": "PUBLIC", "email": "", "avatar": "", "broker": "NSE",
+            "details": [["Mode", "Public Feed"], ["Market Data", "NSE Option Chain + Yahoo"]],
+        }
 
     def __init__(self) -> None:
         self._session: Optional[requests.Session] = None

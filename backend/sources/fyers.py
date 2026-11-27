@@ -154,6 +154,7 @@ def _fmt_epoch(v) -> Optional[str]:
 class FyersDataSource(DataSource):
     name = "fyers"
     login_label = "Login with Fyers"
+    supports_trade_mode = True
 
     def __init__(self) -> None:
         self.app_id = config.FYERS_APP_ID
@@ -258,12 +259,26 @@ class FyersDataSource(DataSource):
         resp = self._check(self._model().get_profile())
         d = resp.get("data") or {}
         name = (d.get("name") or d.get("display_name") or d.get("fy_id") or "Fyers Trader").strip()
+        details = []
+        if d.get("fy_id"):
+            details.append(["Client ID", str(d["fy_id"])])
+        if d.get("pan"):
+            details.append(["PAN", str(d["pan"])])
+        if d.get("mobile_number"):
+            details.append(["Mobile", str(d["mobile_number"])])
+        if d.get("ddpi_enabled") is not None:
+            details.append(["DDPI", "Enabled" if d.get("ddpi_enabled") else "Disabled"])
+        if d.get("mtf_enabled") is not None:
+            details.append(["MTF", "Enabled" if d.get("mtf_enabled") else "Disabled"])
+        if d.get("totp") is not None:
+            details.append(["TOTP", "Enabled" if d.get("totp") else "Disabled"])
         prof = {
             "name": name,
             "user_id": (d.get("fy_id") or "").strip(),
             "email": (d.get("email_id") or "").strip(),
             "avatar": (d.get("image") or "").strip(),
             "broker": "Fyers",
+            "details": details,
         }
         self._profile = prof
         self._profile_token = self._token
@@ -654,3 +669,391 @@ class FyersDataSource(DataSource):
             pass
         finally:
             self._fut_fetching.discard(symbol)
+
+    # ------------------------------------------------------------ Trade Mode
+    def get_trade_snapshot(self) -> dict:
+        fy = self._model()  # validates token & raises AuthRequired if missing
+        today = _ist_now().strftime("%Y-%m-%d")
+
+        def _safe_call(fn, default):
+            try:
+                _rate_limit()
+                r = fn()
+                if isinstance(r, dict) and r.get("s") == "error":
+                    msg = str(r.get("message", ""))
+                    if r.get("code") in (-8, -15, -16, -17) or "token" in msg.lower():
+                        raise AuthRequired(f"Fyers token rejected: {msg}")
+                    return default
+                return r if isinstance(r, dict) else default
+            except AuthRequired:
+                raise
+            except Exception:  # noqa: BLE001
+                return default
+
+        f_resp = _safe_call(fy.funds, {})
+        p_resp = _safe_call(fy.positions, {})
+        o_resp = _safe_call(fy.orderbook, {})
+        t_resp = _safe_call(fy.tradebook, {})
+        h_resp = _safe_call(fy.holdings, {})
+
+        avail = util = total_bal = sod = realized_fund = 0.0
+        for item in f_resp.get("fund_limit") or []:
+            title = str(item.get("title") or "").lower()
+            amt = float(item.get("equityAmount") or 0)
+            iid = item.get("id")
+            if iid == 1 or "total balance" in title:
+                total_bal = amt
+            elif iid == 10 or "available balance" in title:
+                avail = amt
+            elif iid == 2 or "utilized" in title:
+                util = amt
+            elif iid == 3 or "clear balance" in title:
+                sod = amt
+            elif iid == 4 or "realized profit" in title:
+                realized_fund = amt
+
+        overall_p = p_resp.get("overall") or {}
+        positions = []
+        r_sum, u_sum, open_cnt = 0.0, 0.0, 0
+        for p in p_resp.get("netPositions") or []:
+            nq = int(p.get("netQty") or 0)
+            bq, sq = int(p.get("buyQty") or 0), int(p.get("sellQty") or 0)
+            if nq == 0 and bq == 0 and sq == 0:
+                continue
+            r_pl = float(p.get("realized_profit") or 0)
+            u_pl = float(p.get("unrealized_profit") or 0)
+            pl = float(p.get("pl") if p.get("pl") is not None else (r_pl + u_pl))
+            r_sum += r_pl
+            u_sum += u_pl
+            if nq != 0:
+                open_cnt += 1
+            side = "LONG" if nq > 0 else ("SHORT" if nq < 0 else "CLOSED")
+            b_avg = float(p.get("buyAvg") or 0)
+            s_avg = float(p.get("sellAvg") or 0)
+            avg = float(p.get("netAvg") or b_avg or s_avg or 0)
+            ltp = float(p.get("ltp") or 0)
+            buy_val = round(float(p.get("buyVal") or (bq * b_avg)), 2)
+            sell_val = round(float(p.get("sellVal") or (sq * s_avg)), 2)
+            cap_used = round(abs(nq) * avg, 2) if nq != 0 else round(max(buy_val, sell_val, bq * b_avg, sq * s_avg), 2)
+            pnl_pct = round((pl / cap_used) * 100.0, 2) if cap_used > 0 else 0.0
+            pts = round((ltp - avg) if nq > 0 else ((avg - ltp) if nq < 0 else 0.0), 2)
+            mv_pct = round((pts / avg) * 100.0, 2) if (avg > 0 and nq != 0) else 0.0
+            sym_p = str(p.get("symbol") or "")
+            ex_p = str(p.get("segment") or (sym_p.split(":", 1)[0] if ":" in sym_p else ""))
+            positions.append({
+                "id": str(p.get("id") or sym_p),
+                "security_id": str(p.get("fyToken") or sym_p),
+                "symbol": sym_p,
+                "exchange": ex_p,
+                "exchange_segment": ex_p,
+                "side": side,
+                "product": str(p.get("productType") or ""),
+                "net_qty": nq,
+                "buy_qty": bq,
+                "sell_qty": sq,
+                "avg_price": round(avg, 2),
+                "buy_avg": round(b_avg, 2),
+                "sell_avg": round(s_avg, 2),
+                "buy_value": buy_val,
+                "sell_value": sell_val,
+                "capital_used": cap_used,
+                "ltp": round(ltp, 2),
+                "points": pts,
+                "move_pct": mv_pct,
+                "pnl_pct": pnl_pct,
+                "realized": round(r_pl, 2),
+                "unrealized": round(u_pl, 2),
+                "pnl": round(pl, 2),
+                "is_open": nq != 0,
+            })
+
+        pos_ltp = {p["symbol"]: p["ltp"] for p in positions if p.get("ltp")}
+        _st_map = {1: "CANCELLED", 2: "TRADED", 4: "TRANSIT", 5: "REJECTED", 6: "PENDING", 7: "EXPIRED"}
+        _tp_map = {1: "LIMIT", 2: "MARKET", 3: "SL-M", 4: "SL-L"}
+        orders, pending_cnt = [], 0
+        for o in o_resp.get("orderBook") or []:
+            st_code = int(o.get("status") or 0)
+            st = _st_map.get(st_code, str(o.get("status") or ""))
+            pend = st in ("PENDING", "TRANSIT")
+            if pend:
+                pending_cnt += 1
+            s_val = int(o.get("side") or 0)
+            side = "BUY" if s_val == 1 else ("SELL" if s_val == -1 else str(o.get("side") or ""))
+            sym_o = str(o.get("symbol") or "")
+            qty_o = int(o.get("qty") or 0)
+            px_o = round(float(o.get("tradedPrice") or o.get("limitPrice") or 0), 2)
+            stp_o = round(float(o.get("stopPrice") or 0), 2)
+            ltp_o = round(float(o.get("lp") or pos_ltp.get(sym_o) or 0), 2)
+            ref_px = px_o or stp_o or ltp_o
+            orders.append({
+                "id": str(o.get("id") or ""),
+                "security_id": str(o.get("fyToken") or sym_o),
+                "symbol": sym_o,
+                "exchange_segment": sym_o.split(":", 1)[0] if ":" in sym_o else "",
+                "side": side,
+                "qty": qty_o,
+                "filled_qty": int(o.get("filledQty") or 0),
+                "price": px_o,
+                "stop_price": stp_o,
+                "ltp": ltp_o,
+                "capital_used": round(qty_o * ref_px, 2),
+                "order_type": _tp_map.get(int(o.get("type") or 0), str(o.get("type") or "")),
+                "product": str(o.get("productType") or ""),
+                "validity": str(o.get("validity") or "DAY"),
+                "take_profit": float(o.get("takeProfit") or 0),
+                "stop_loss": float(o.get("stopLoss") or 0),
+                "status": st,
+                "message": str(o.get("message") or ""),
+                "time": str(o.get("orderDateTime") or ""),
+                "is_pending": pend,
+                "can_modify": pend,
+            })
+
+        trades = []
+        for tr in t_resp.get("tradeBook") or []:
+            q = int(tr.get("tradedQty") or 0)
+            px = float(tr.get("tradePrice") or 0)
+            s_val = int(tr.get("side") or 0)
+            side = "BUY" if s_val == 1 else ("SELL" if s_val == -1 else str(tr.get("side") or ""))
+            trades.append({
+                "id": str(tr.get("exchangeOrderNo") or tr.get("orderNumber") or ""),
+                "order_id": str(tr.get("orderNumber") or ""),
+                "symbol": str(tr.get("symbol") or ""),
+                "side": side,
+                "qty": q,
+                "price": round(px, 2),
+                "value": round(float(tr.get("tradeValue") or (q * px)), 2),
+                "product": str(tr.get("productType") or ""),
+                "time": str(tr.get("orderDateTime") or ""),
+            })
+
+        holdings = []
+        ov_h = h_resp.get("overall") or {}
+        for h in h_resp.get("holdings") or []:
+            q = int(h.get("quantity") or h.get("remainingQuantity") or 0)
+            avg = float(h.get("costPrice") or 0)
+            ltp = float(h.get("ltp") or avg)
+            val = float(h.get("marketVal") or (q * ltp))
+            pl = float(h.get("pl") if h.get("pl") is not None else (ltp - avg) * q)
+            holdings.append({
+                "symbol": str(h.get("symbol") or ""),
+                "qty": q,
+                "avg_price": round(avg, 2),
+                "ltp": round(ltp, 2),
+                "value": round(val, 2),
+                "pnl": round(pl, 2),
+            })
+
+        realized_tot = float(overall_p.get("pl_realized") if overall_p.get("pl_realized") is not None else (r_sum or realized_fund))
+        unrealized_tot = float(overall_p.get("pl_unrealized") if overall_p.get("pl_unrealized") is not None else u_sum)
+        tot_pnl = float(overall_p.get("pl_total") if overall_p.get("pl_total") is not None else (realized_tot + unrealized_tot))
+        return {
+            "supported": True,
+            "source": "fyers",
+            "broker_label": "Fyers API v3",
+            "today": today,
+            "pnl": {
+                "total": round(tot_pnl, 2),
+                "realized": round(realized_tot, 2),
+                "unrealized": round(unrealized_tot, 2),
+                "holdings_pnl": round(float(ov_h.get("total_pl") or sum(x["pnl"] for x in holdings)), 2),
+            },
+            "funds": {
+                "available": round(avail, 2),
+                "utilized": round(util, 2),
+                "total": round(total_bal or (avail + util), 2),
+                "sod": round(sod or total_bal, 2),
+                "withdrawable": round(avail, 2),
+                "holdings_value": round(float(ov_h.get("total_current_value") or sum(x["value"] for x in holdings)), 2),
+            },
+            "counts": {
+                "open_positions": int(overall_p.get("count_open") if overall_p.get("count_open") is not None else open_cnt),
+                "total_positions": len(positions),
+                "orders": len(orders),
+                "pending_orders": pending_cnt,
+                "trades": len(trades),
+                "holdings": len(holdings),
+            },
+            "positions": positions,
+            "orders": orders,
+            "trades": trades,
+            "holdings": holdings,
+            "controls": {
+                "can_exit_all": True,
+                "can_exit_single": True,
+                "can_reverse_position": True,
+                "can_set_sl_target": True,
+                "can_cancel_order": True,
+                "can_modify_order": True,
+                "can_place_order": True,
+                "can_killswitch": False,
+                "can_pnl_exit": False,
+            },
+        }
+
+    def get_trade_reports(self) -> dict:
+        fy = self._model()
+        to_d = _ist_now().strftime("%Y-%m-%d")
+        frm_d = (_ist_now() - timedelta(days=30)).strftime("%Y-%m-%d")
+
+        def _get(fn, data):
+            try:
+                _rate_limit()
+                r = fn(data=data)
+                if not isinstance(r, dict) or r.get("s") == "error":
+                    return []
+                d = r.get("data")
+                if d is None:
+                    d = next((r[k] for k in ("charges_details", "ledger_details", "records", "list") if k in r), [])
+                if isinstance(d, dict):
+                    for k in ("charges_details", "ledger_details", "records", "items", "list", "data"):
+                        if isinstance(d.get(k), list):
+                            return d[k]
+                    return [d] if d else []
+                return d if isinstance(d, list) else []
+            except Exception:  # noqa: BLE001
+                return []
+
+        return {
+            "supported": True,
+            "source": "fyers",
+            "charges": _get(fy.charges_history, {"from_date": frm_d, "to_date": to_d, "segment_type": "0", "exchange_type": "0", "report_type": "1"})[:50],
+            "realised": _get(fy.realised_profit_history, {"from_date": frm_d, "to_date": to_d})[:50],
+            "ledger": _get(fy.ledger_history, {"from_date": frm_d, "to_date": to_d})[:50],
+        }
+
+    def _find_open_position(self, pos_id: Optional[str] = None, symbol: Optional[str] = None) -> dict:
+        fy = self._model()
+        _rate_limit()
+        p_resp = self._check(fy.positions())
+        for p in p_resp.get("netPositions") or []:
+            nq = int(p.get("netQty") or 0)
+            if nq == 0:
+                continue
+            pid = str(p.get("id") or p.get("symbol") or "")
+            sym = str(p.get("symbol") or "")
+            if (pos_id and pid == str(pos_id)) or (symbol and sym == str(symbol)):
+                return p
+        raise ValueError(f"No open Fyers position found for {symbol or pos_id}")
+
+    def cancel_order(self, order_id: str) -> dict:
+        fy = self._model()
+        _rate_limit()
+        return self._check(fy.cancel_order(data={"id": order_id}))
+
+    def exit_position(self, pos_id: Optional[str] = None, **_kw) -> dict:
+        fy = self._model()
+        _rate_limit()
+        data = {"id": pos_id} if pos_id else {}
+        return self._check(fy.exit_positions(data=data))
+
+    def reverse_position(self, pos_id: Optional[str] = None, symbol: Optional[str] = None,
+                         qty: int = 0, **_kw) -> dict:
+        p = self._find_open_position(pos_id=pos_id, symbol=symbol)
+        nq = int(p.get("netQty") or 0)
+        abs_q = abs(nq)
+        target_q = int(qty) if qty and int(qty) > 0 else abs_q
+        order_qty = abs_q + target_q
+        side_int = -1 if nq > 0 else 1
+        fy = self._model()
+        _rate_limit()
+        res = self._check(fy.place_order(data={
+            "symbol": str(p["symbol"]),
+            "qty": order_qty,
+            "type": 2,
+            "side": side_int,
+            "productType": str(p.get("productType") or "INTRADAY"),
+            "limitPrice": 0,
+            "stopPrice": 0,
+            "validity": "DAY",
+            "disclosedQty": 0,
+            "offlineOrder": False,
+            "isSliceOrder": False,
+        }))
+        return {"action": "REVERSE", "symbol": p.get("symbol"), "side": "SELL" if side_int == -1 else "BUY",
+                "qty": order_qty, "order": res}
+
+    def place_sl_target(self, *, pos_id: Optional[str] = None, symbol: Optional[str] = None,
+                        qty: int = 0, target_price: float = 0.0, sl_price: float = 0.0,
+                        sl_limit_price: float = 0.0, trailing_jump: float = 0.0, **_kw) -> dict:
+        p = self._find_open_position(pos_id=pos_id, symbol=symbol)
+        nq = int(p.get("netQty") or 0)
+        exit_side = -1 if nq > 0 else 1
+        exit_qty = int(qty) if qty and int(qty) > 0 else abs(nq)
+        sym = str(p["symbol"])
+        prod = str(p.get("productType") or "INTRADAY")
+        if float(target_price or 0) <= 0 and float(sl_price or 0) <= 0:
+            raise ValueError("Enter a Target price and/or Stop Loss price.")
+        fy = self._model()
+        placed = []
+        if float(target_price or 0) > 0:
+            _rate_limit()
+            r_tp = self._check(fy.place_order(data={
+                "symbol": sym, "qty": exit_qty, "type": 1, "side": exit_side,
+                "productType": prod, "limitPrice": float(target_price), "stopPrice": 0,
+                "validity": "DAY", "disclosedQty": 0, "offlineOrder": False, "isSliceOrder": False,
+            }))
+            placed.append({"leg": "TARGET", "price": float(target_price), "res": r_tp})
+        if float(sl_price or 0) > 0:
+            _rate_limit()
+            use_lim = float(sl_limit_price or 0) > 0
+            r_sl = self._check(fy.place_order(data={
+                "symbol": sym, "qty": exit_qty, "type": 4 if use_lim else 3, "side": exit_side,
+                "productType": prod,
+                "limitPrice": float(sl_limit_price) if use_lim else 0,
+                "stopPrice": float(sl_price),
+                "validity": "DAY", "disclosedQty": 0, "offlineOrder": False, "isSliceOrder": False,
+            }))
+            placed.append({"leg": "SL", "trigger_price": float(sl_price), "res": r_sl})
+        note = ""
+        if float(trailing_jump or 0) > 0:
+            note = "Fyers placed Target/SL exit orders; adjust Stop Price manually or use Modify Order to trail SL."
+        return {"placed": placed, "note": note}
+
+    def modify_order(self, *, order_id: str, order_type: str = "LIMIT", qty: int = 1,
+                     price: float = 0.0, stop_price: float = 0.0,
+                     take_profit: float = 0.0, stop_loss: float = 0.0, **_kw) -> dict:
+        tp_map = {"LIMIT": 1, "MARKET": 2, "SL-M": 3, "STOP_LOSS_MARKET": 3, "SL-L": 4, "STOP_LOSS": 4}
+        ot = tp_map.get(str(order_type).upper(), 1)
+        payload: dict = {"id": str(order_id), "type": ot, "qty": int(qty)}
+        if ot in (1, 4):
+            payload["limitPrice"] = float(price or 0)
+        if ot in (3, 4):
+            payload["stopPrice"] = float(stop_price or 0)
+        if float(take_profit or 0) > 0:
+            payload["takeProfit"] = float(take_profit)
+        if float(stop_loss or 0) > 0:
+            payload["stopLoss"] = float(stop_loss)
+        fy = self._model()
+        _rate_limit()
+        return self._check(fy.modify_order(data=payload))
+
+    def place_order(self, *, symbol: str = "", side: str = "BUY", qty: int = 1,
+                    product: str = "INTRADAY", order_type: str = "MARKET",
+                    price: float = 0.0, stop_price: float = 0.0,
+                    target_price: float = 0.0, sl_price: float = 0.0, **_kw) -> dict:
+        if not symbol:
+            raise ValueError("symbol required")
+        tp_map = {"LIMIT": 1, "MARKET": 2, "SL-M": 3, "STOP_LOSS_MARKET": 3, "SL-L": 4, "STOP_LOSS": 4}
+        ot = tp_map.get(str(order_type).upper(), 2)
+        side_int = 1 if str(side).upper() in ("BUY", "LONG", "1") else -1
+        payload: dict = {
+            "symbol": str(symbol), "qty": int(qty), "type": ot, "side": side_int,
+            "productType": str(product or "INTRADAY"),
+            "limitPrice": float(price or 0) if ot in (1, 4) else 0,
+            "stopPrice": float(stop_price or 0) if ot in (3, 4) else 0,
+            "validity": "DAY", "disclosedQty": 0, "offlineOrder": False, "isSliceOrder": False,
+        }
+        if float(target_price or 0) > 0:
+            payload["takeProfit"] = float(target_price)
+        if float(sl_price or 0) > 0:
+            payload["stopLoss"] = float(sl_price)
+        fy = self._model()
+        _rate_limit()
+        return self._check(fy.place_order(data=payload))
+
+    def get_live_quote(self, symbol: str = "", **_kw) -> dict | None:
+        sym = (symbol or "").strip()
+        if not sym:
+            return None
+        return self._depth_quote(self._resolve_fyers_eq(sym))

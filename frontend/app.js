@@ -30,7 +30,7 @@ const NSE_HOLIDAYS = new Set([
 // Read the wall clock in IST regardless of the viewer's own timezone.
 const _IST_FMT = new Intl.DateTimeFormat("en-GB", {
   timeZone: "Asia/Kolkata", weekday: "short", year: "numeric", month: "2-digit",
-  day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
 });
 function marketStatus(now = new Date()) {
   const p = Object.fromEntries(_IST_FMT.formatToParts(now).map((x) => [x.type, x.value]));
@@ -42,6 +42,49 @@ function marketStatus(now = new Date()) {
   if (mins >= MARKET_CLOSE_MIN) return { open: false, reason: "After hours" };
   return { open: true, reason: "Market open" };
 }
+function _pad2(n) { return String(n).padStart(2, "0"); }
+function _fmtDurationSec(sec) {
+  sec = Math.max(0, Math.floor(sec));
+  const d = Math.floor(sec / 86400);
+  const h = Math.floor((sec % 86400) / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return d > 0 ? `${d}d ${_pad2(h)}h ${_pad2(m)}m` : `${_pad2(h)}:${_pad2(m)}:${_pad2(s)}`;
+}
+function _updateTopbarTimer() {
+  const wrap = $("topbarTimer"), clEl = $("tbTimerClock"), seEl = $("tbTimerSess");
+  if (!wrap || !clEl || !seEl) return;
+  const now = new Date();
+  const p = Object.fromEntries(_IST_FMT.formatToParts(now).map((x) => [x.type, x.value]));
+  const hh = +p.hour, mm = +p.minute, ss = +p.second;
+  clEl.textContent = `${p.hour}:${p.minute}:${p.second} IST`;
+  const st = marketStatus(now);
+  wrap.classList.toggle("open", st.open);
+  wrap.classList.toggle("closed", !st.open);
+  const nowSecOfDay = hh * 3600 + mm * 60 + ss;
+  if (st.open) {
+    const rem = MARKET_CLOSE_MIN * 60 - nowSecOfDay;
+    seEl.textContent = `Closes ${_fmtDurationSec(rem)}`;
+    wrap.title = "Market Open (09:15–15:30 IST) · Closes in " + _fmtDurationSec(rem);
+    return;
+  }
+  // Find next valid trading day open (09:15:00 IST)
+  const istNowMs = Date.UTC(+p.year, +p.month - 1, +p.day, hh, mm, ss);
+  let targetDay = new Date(Date.UTC(+p.year, +p.month - 1, +p.day));
+  if (nowSecOfDay >= MARKET_OPEN_MIN * 60) targetDay.setUTCDate(targetDay.getUTCDate() + 1);
+  for (let i = 0; i < 14; i++) {
+    const wd = targetDay.getUTCDay();
+    const dStr = `${targetDay.getUTCFullYear()}-${_pad2(targetDay.getUTCMonth() + 1)}-${_pad2(targetDay.getUTCDate())}`;
+    if (wd !== 0 && wd !== 6 && !NSE_HOLIDAYS.has(dStr)) break;
+    targetDay.setUTCDate(targetDay.getUTCDate() + 1);
+  }
+  const openMs = Date.UTC(targetDay.getUTCFullYear(), targetDay.getUTCMonth(), targetDay.getUTCDate(), 9, 15, 0);
+  const remSec = Math.max(0, Math.round((openMs - istNowMs) / 1000));
+  seEl.textContent = `Opens ${_fmtDurationSec(remSec)}`;
+  wrap.title = `${st.reason} · Next NSE/BSE session opens in ${_fmtDurationSec(remSec)}`;
+}
+setInterval(_updateTopbarTimer, 1000);
+document.addEventListener("DOMContentLoaded", _updateTopbarTimer);
 function setCountdown(txt) {
   const el = $("oiCountdown");
   if (el) el.textContent = "⏱ " + txt;
@@ -217,29 +260,106 @@ async function loadProfile() {
   try {
     const d = await (await fetch("/api/profile")).json();
     if (!d.logged_in) { wrap.classList.add("hidden"); return; }
-    const name = d.name || (d.source ? d.source.toUpperCase() + " Trader" : "Trader");
+    const name = d.name || (d.source ? d.source.toUpperCase() + " Account" : "Trader");
     if ($("profileName")) $("profileName").textContent = name;
     if ($("profileFullName")) $("profileFullName").textContent = name;
     const subBits = [d.broker || (d.source || "").toUpperCase(), d.user_id, d.email].filter(Boolean);
     if ($("profileSub")) $("profileSub").textContent = subBits.join(" · ");
+    const st = $("profileStatusBadge");
+    if (st) {
+      st.textContent = d.token_expired ? "Token Expired — Reconnect" : "Connected";
+      st.className = "prof-badge " + (d.token_expired ? "err" : "ok");
+    }
+    const det = $("profileDetails");
+    if (det) {
+      const escP = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[m]));
+      const rows = Array.isArray(d.details) ? d.details : [];
+      det.innerHTML = rows.map(([k, v]) => `<div class="prof-det"><div class="k">${escP(k)}</div><div class="v" title="${escP(v)}">${escP(v || "—")}</div></div>`).join("");
+      det.classList.toggle("hidden", rows.length === 0);
+    }
+    if ($("profCustomName")) $("profCustomName").value = d.needs_custom_name ? "" : name;
+    if ($("profCustomAvatar")) $("profCustomAvatar").value = d.avatar || "";
+    if ($("profSetNameBtn")) $("profSetNameBtn").classList.toggle("hidden", !d.needs_custom_name);
     _fillAvatar($("profileAvatar"), d.avatar, name);
     _fillAvatar($("profileAvatarLg"), d.avatar, name);
     const canOAuth = d.source === "fyers" || d.source === "upstox";
-    const canLogout = canOAuth || d.source === "dhan";
-    if ($("profileReconnect")) $("profileReconnect").classList.toggle("hidden", !canOAuth);
+    const canReconnect = canOAuth || d.source === "dhan";
+    const canLogout = canReconnect;
+    if ($("profileReconnect")) {
+      $("profileReconnect").classList.toggle("hidden", !canReconnect);
+      $("profileReconnect").dataset.src = d.source || "";
+      $("profileReconnect").textContent = d.token_expired ? "🔄 Reconnect Now" : "🔄 Reconnect";
+    }
     if ($("logoutBtn")) $("logoutBtn").classList.toggle("hidden", !canLogout);
     if ($("switchBrokerBtn")) $("switchBrokerBtn").classList.remove("hidden");
     wrap.classList.remove("hidden");
   } catch (e) { /* keep hidden on error */ }
 }
 (function initProfileMenu() {
-  const btn = $("profileBtn"), menu = $("profileMenu"), logout = $("logoutBtn"), sw = $("switchBrokerBtn");
+  const btn = $("profileBtn"), menu = $("profileMenu"), logout = $("logoutBtn"), sw = $("switchBrokerBtn"), rc = $("profileReconnect");
   if (btn && menu) {
     btn.addEventListener("click", (e) => { e.stopPropagation(); menu.classList.toggle("hidden"); });
     document.addEventListener("click", (e) => {
       if (!menu.classList.contains("hidden") && !e.target.closest("#profileWrap")) menu.classList.add("hidden");
     });
     document.addEventListener("keydown", (e) => { if (e.key === "Escape") menu.classList.add("hidden"); });
+  }
+  if ($("profEditToggle") && $("profileCustomForm")) {
+    $("profEditToggle").addEventListener("click", (e) => {
+      e.stopPropagation();
+      $("profileCustomForm").classList.toggle("hidden");
+    });
+  }
+  if ($("profSetNameBtn") && $("profileCustomForm")) {
+    $("profSetNameBtn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      $("profileCustomForm").classList.remove("hidden");
+      $("profCustomName")?.focus();
+    });
+  }
+  if ($("profCustomFile")) {
+    $("profCustomFile").addEventListener("change", (e) => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const sz = 96, c = document.createElement("canvas");
+          c.width = sz; c.height = sz;
+          const ctx = c.getContext("2d");
+          const s = Math.min(img.width, img.height);
+          const sx = (img.width - s) / 2, sy = (img.height - s) / 2;
+          ctx.drawImage(img, sx, sy, s, s, 0, 0, sz, sz);
+          if ($("profCustomAvatar")) $("profCustomAvatar").value = c.toDataURL("image/jpeg", 0.82);
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(f);
+    });
+  }
+  if ($("profCustomSave")) {
+    $("profCustomSave").addEventListener("click", async () => {
+      const name = ($("profCustomName")?.value || "").trim();
+      const avatar = ($("profCustomAvatar")?.value || "").trim();
+      try {
+        await fetch("/api/profile/custom", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, avatar }),
+        });
+        if ($("profileCustomForm")) $("profileCustomForm").classList.add("hidden");
+        loadProfile();
+      } catch (e) {}
+    });
+  }
+  if (rc) {
+    rc.addEventListener("click", () => {
+      const s = rc.dataset.src || CFG.source;
+      if (s === "fyers" || s === "upstox") { window.location.href = "/auth/login"; return; }
+      if (menu) menu.classList.add("hidden");
+      selectBrokerTab("dhan");
+      showLogin();
+    });
   }
   async function doSignOut() {
     try { await fetch("/api/auth/logout", { method: "POST" }); } catch (e) {}

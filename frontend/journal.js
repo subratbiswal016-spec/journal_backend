@@ -51,7 +51,7 @@
   }
 
   // ---------------------------------------------------------------- tabs
-  document.querySelectorAll(".tab").forEach((btn) =>
+  document.querySelectorAll("#navMain .tab[data-view]").forEach((btn) =>
     btn.addEventListener("click", () => switchView(btn.dataset.view)));
   // sidebar: ☰ opens (mobile) or re-opens a collapsed sidebar (desktop);
   // « collapses it. A resize nudge lets the charts refit to the new width.
@@ -69,8 +69,10 @@
   (window.__authReady || Promise.resolve(true)).then((ok) => { if (ok) refreshIpoBadge(); });
 
   let journalSub = "journal";          // "journal" | "capital" — sub-tab inside Journal
+  let lastNonTradeView = "home";
   function switchView(view) {
     if (document.body.classList.contains("needs-login")) return;
+    if (view !== "trademode") lastNonTradeView = view;
     document.body.classList.remove("sb-open");   // close the mobile sidebar on nav
     document.querySelectorAll(".tab").forEach((b) =>
       b.classList.toggle("active", b.dataset.view === view));
@@ -84,6 +86,11 @@
     if ($("viewIpo")) $("viewIpo").classList.toggle("hidden", view !== "ipo");
     $("viewRules").classList.toggle("hidden", view !== "rules");
     $("viewInsights").classList.toggle("hidden", view !== "insights");
+    if ($("viewTradeMode")) $("viewTradeMode").classList.toggle("hidden", view !== "trademode");
+    if ($("navMain")) $("navMain").classList.toggle("hidden", view === "trademode");
+    if ($("navTrade")) $("navTrade").classList.toggle("hidden", view !== "trademode");
+    if ($("tradeModeBtn")) $("tradeModeBtn").classList.toggle("active", view === "trademode");
+    if ($("tradeModeLbl")) $("tradeModeLbl").textContent = view === "trademode" ? "Exit Trade Mode" : "Trade Mode";
     const oiCtl = $("oiControls");
     if (oiCtl) oiCtl.style.display = view === "oi" ? "" : "none";
     if (view === "home") loadHome();
@@ -98,6 +105,7 @@
     if (view === "ipo") loadIpos();
     if (view === "rules") loadRules();
     if (view === "insights") loadInsights();
+    if (view === "trademode") loadTradeMode();
   }
   // Journal ↔ Capital sub-tabs (Capital now lives inside the Journal page)
   document.querySelectorAll("#jSub .subtab").forEach((b) =>
@@ -1696,7 +1704,7 @@
         try {
           const r = await (await fetch("/api/symbols?q=" + encodeURIComponent(q))).json();
           if (r.items && r.items.length) return pick(r.items[0]);
-        } catch (err) {}
+        } catch (err) { }
         pick(q);
       }
       else if (e.key === "Escape") { hide(); }
@@ -3352,6 +3360,1005 @@
       rulesSaveMsg("✅ Saved. Your rules and targets are updated.");
       loadRules();
     } catch (e) { rulesSaveMsg("Save failed: " + e.message, true); }
+  }
+
+  // ---------------------------------------------------------------- Trade Mode
+  const TM_REFRESH_SEC = 10;
+  let tmData = null, tmReports = null, tmTab = "overview", tmBound = false, tmBusy = false;
+  let tmCountdown = TM_REFRESH_SEC, tmRefreshCount = 0;
+  function _tmSetTimer(txt, cls) {
+    const el = $("tmodeCountdown");
+    if (el) {
+      el.textContent = txt + ` · #${tmRefreshCount}`;
+      el.className = "tm-auto-timer" + (cls ? " " + cls : "");
+    }
+    const wrap = $("tmodeAutoWrap");
+    if (wrap) wrap.classList.toggle("off", cls === "paused");
+  }
+  function tmodeMsg(msg, err) {
+    const el = $("tmodeNote"); if (!el) return;
+    if (!msg) { el.classList.add("hidden"); return; }
+    el.className = "jnote" + (err ? " err" : "");
+    el.textContent = msg;
+    el.classList.remove("hidden");
+  }
+  function setTradeSubTab(tab) {
+    tmTab = tab || "overview";
+    document.querySelectorAll("#navTrade [data-tmtab]").forEach((x) => x.classList.toggle("active", x.dataset.tmtab === tmTab));
+    document.body.classList.remove("sb-open");
+    if (tmTab === "reports" && !tmReports) loadTradeReports();
+    renderTradeBody();
+  }
+  function bindTradeModeOnce() {
+    if (tmBound) return; tmBound = true;
+    if ($("tmodeCloseBtn")) $("tmodeCloseBtn").addEventListener("click", () => switchView(lastNonTradeView || "home"));
+    if ($("tmodeSideExit")) $("tmodeSideExit").addEventListener("click", () => switchView(lastNonTradeView || "home"));
+    if ($("tmodeRefresh")) $("tmodeRefresh").addEventListener("click", () => loadTradeMode({ forceReports: tmTab === "reports" }));
+    if ($("tmodeAuto")) $("tmodeAuto").addEventListener("change", () => {
+      tmCountdown = TM_REFRESH_SEC;
+      if ($("tmodeAuto").checked) loadTradeMode({ silent: true });
+      else _tmSetTimer("⏸ off", "paused");
+    });
+    if ($("tmodeExitAll")) $("tmodeExitAll").addEventListener("click", async () => {
+      if (!confirm("Exit ALL open positions right now on your live broker account?")) return;
+      try {
+        const r = await fetch("/api/trademode/exit-position", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || "Exit all failed");
+        tmodeMsg("✅ Sent Exit All request to broker.");
+        loadTradeMode();
+      } catch (e) { tmodeMsg("Exit all failed: " + e.message, true); }
+    });
+    if ($("navTrade")) $("navTrade").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-tmtab]"); if (!b) return;
+      setTradeSubTab(b.dataset.tmtab);
+    });
+    if ($("tmodeBody")) $("tmodeBody").addEventListener("click", async (e) => {
+      const jump = e.target.closest("[data-jump-tmtab]");
+      if (jump) { setTradeSubTab(jump.dataset.jumpTmtab); return; }
+      const exBtn = e.target.closest("[data-exit-pos]");
+      if (exBtn) {
+        const pid = exBtn.dataset.exitPos, sym = exBtn.dataset.sym || pid;
+        if (!confirm(`Exit open position ${sym}?`)) return;
+        try {
+          const r = await fetch("/api/trademode/exit-position", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: pid, symbol: sym }) });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.detail || "Exit failed");
+          tmodeMsg(`✅ Exit placed for ${sym}.`);
+          loadTradeMode();
+        } catch (err) { tmodeMsg("Exit failed: " + err.message, true); }
+        return;
+      }
+      const revBtn = e.target.closest("[data-rev-pos]");
+      if (revBtn) {
+        const pid = revBtn.dataset.revPos, sym = revBtn.dataset.sym || pid;
+        if (!confirm(`Reverse open position ${sym}? (Closes current qty and opens opposite side)`)) return;
+        try {
+          const r = await fetch("/api/trademode/reverse-position", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: pid, symbol: sym }) });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.detail || "Reverse failed");
+          tmodeMsg(`✅ Reversed ${sym} (${d.result?.side || ""} ${d.result?.qty || ""}).`);
+          loadTradeMode();
+        } catch (err) { tmodeMsg("Reverse failed: " + err.message, true); }
+        return;
+      }
+      const cBtn = e.target.closest("[data-cancel-ord]");
+      if (cBtn) {
+        const oid = cBtn.dataset.cancelOrd, sym = cBtn.dataset.sym || oid;
+        if (!confirm(`Cancel pending order ${sym} (#${oid})?`)) return;
+        try {
+          const r = await fetch("/api/trademode/cancel-order", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: oid }) });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.detail || "Cancel failed");
+          tmodeMsg(`✅ Cancelled order #${oid}.`);
+          loadTradeMode();
+        } catch (err) { tmodeMsg("Cancel failed: " + err.message, true); }
+        return;
+      }
+      const iPosRow = e.target.closest("[data-inspect-pos]");
+      if (iPosRow) {
+        const idx = Number(iPosRow.dataset.inspectPos);
+        const pos = (tmData?.positions || [])[idx];
+        if (pos) openTmInspect({ kind: "position", item: pos });
+        return;
+      }
+      const iOrdRow = e.target.closest("[data-inspect-ord]");
+      if (iOrdRow) {
+        const idx = Number(iOrdRow.dataset.inspectOrd);
+        const ord = (tmData?.orders || [])[idx];
+        if (ord) openTmInspect({ kind: "order", item: ord });
+        return;
+      }
+      const iTrdRow = e.target.closest("[data-inspect-trd]");
+      if (iTrdRow) {
+        const idx = Number(iTrdRow.dataset.inspectTrd);
+        const trd = (tmData?.trades || [])[idx];
+        if (trd) openTmInspect({ kind: "trade", item: trd });
+        return;
+      }
+      const ksBtn = e.target.closest("[data-ks-set]");
+      if (ksBtn) {
+        const st = ksBtn.dataset.ksSet;
+        if (!confirm(`${st === "ACTIVATE" ? "ACTIVATE" : "DEACTIVATE"} Dhan Kill Switch? (All positions & pending orders must be closed first when activating.)`)) return;
+        try {
+          const r = await fetch("/api/trademode/killswitch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: st }) });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.detail || "Kill switch update failed");
+          tmodeMsg(`✅ Kill Switch → ${st}.`);
+          loadTradeMode();
+        } catch (err) { tmodeMsg("Kill Switch error: " + err.message, true); }
+        return;
+      }
+      if (e.target.id === "tmPnlExitSave" || e.target.id === "tmPnlExitClear") {
+        const active = e.target.id === "tmPnlExitSave";
+        const pv = Number($("tmProfVal")?.value || 0), lv = Number($("tmLossVal")?.value || 0);
+        const ks = !!($("tmExitKs")?.checked);
+        try {
+          const r = await fetch("/api/trademode/pnl-exit", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ profit_value: pv, loss_value: lv, enable_kill_switch: ks, active }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.detail || "P&L exit update failed");
+          tmodeMsg(active ? "✅ P&L Auto-Exit rule updated." : "✅ P&L Auto-Exit disabled.");
+          loadTradeMode();
+        } catch (err) { tmodeMsg("P&L Exit error: " + err.message, true); }
+      }
+    });
+  }
+  if ($("tradeModeBtn")) $("tradeModeBtn").addEventListener("click", () => {
+    const inTm = $("viewTradeMode") && !$("viewTradeMode").classList.contains("hidden");
+    switchView(inTm ? (lastNonTradeView || "home") : "trademode");
+  });
+  async function loadTradeReports() {
+    try {
+      const r = await fetch("/api/trademode/reports");
+      if (r.ok) { tmReports = await r.json(); renderTradeBody(); }
+    } catch (e) { /* keep silent */ }
+  }
+  async function loadTradeMode(opts) {
+    bindTradeModeOnce();
+    const silent = opts && opts.silent;
+    if (tmBusy && silent) return;
+    tmBusy = true;
+    const btn = $("tmodeRefresh"), old = btn ? btn.textContent : "";
+    if (!silent && btn) { btn.disabled = true; btn.textContent = "Loading…"; }
+    try {
+      const r = await fetch("/api/trademode");
+      const d = await r.json().catch(() => ({}));
+      if (r.status === 401) {
+        if ($("tmodeContent")) $("tmodeContent").classList.add("hidden");
+        if ($("tmodeEmpty")) {
+          const msg = d.detail && d.detail !== "login_required" ? d.detail : "Log in / connect your broker account first to open live Trade Mode.";
+          $("tmodeEmpty").innerHTML = `<div class="jnote err" style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap"><span>${esc(msg)}</span><button class="jbtn primary sm" type="button" onclick="document.getElementById('profileReconnect')?.click()">🔄 Reconnect Broker</button></div>`;
+          $("tmodeEmpty").classList.remove("hidden");
+        }
+        return;
+      }
+      if (!r.ok) throw new Error(d.detail || "Failed to load Trade Mode");
+      tmData = d;
+      tmRefreshCount += 1;
+      tmCountdown = TM_REFRESH_SEC;
+      _tmSetTimer("⏱ " + tmCountdown + "s");
+      if (opts && opts.forceReports) tmReports = null;
+      renderTradeMode();
+      if (tmTab === "reports" && d.supported && !tmReports) loadTradeReports();
+    } catch (e) {
+      if (!silent) tmodeMsg("Could not load Trade Mode: " + e.message, true);
+    } finally {
+      tmBusy = false;
+      if (!silent && btn) { btn.disabled = false; btn.textContent = old; }
+    }
+  }
+  function renderTradeMode() {
+    const d = tmData; if (!d) return;
+    if ($("tmodeBrokerBadge")) $("tmodeBrokerBadge").textContent = (d.source || "").toUpperCase();
+    if ($("tmodeDate")) $("tmodeDate").textContent = d.today ? `${d.today} · ${d.broker_label || ""}` : "";
+    if (!d.supported) {
+      if ($("tmodeContent")) $("tmodeContent").classList.add("hidden");
+      if ($("tmodeExitAll")) $("tmodeExitAll").classList.add("hidden");
+      if ($("tmodeEmpty")) {
+        $("tmodeEmpty").innerHTML = `<div class="jnote">⚡ <b>${esc(d.note || "Trade Mode is currently supported for Fyers and Dhan.")}</b> Other brokers will be added later. Switch to <b>Fyers</b> or <b>Dhan</b> from the profile menu on the top-right to use live Trade Mode.</div>`;
+        $("tmodeEmpty").classList.remove("hidden");
+      }
+      return;
+    }
+    if ($("tmodeEmpty")) $("tmodeEmpty").classList.add("hidden");
+    if ($("tmodeContent")) $("tmodeContent").classList.remove("hidden");
+    const p = d.pnl || {}, f = d.funds || {}, c = d.counts || {}, ctrl = d.controls || {};
+    if ($("tmodeExitAll")) $("tmodeExitAll").classList.toggle("hidden", !(ctrl.can_exit_all && (c.open_positions > 0 || c.pending_orders > 0)));
+    const kcard = (l, v, cls, sub) =>
+      `<div class="kpi"><div class="kpi-main"><div class="kpi-l">${l}</div><div class="kpi-v ${cls || ""}">${v}</div><div class="kpi-s">${sub}</div></div></div>`;
+    $("tmodeKpis").innerHTML =
+      kcard("Today Total P&L", signed(p.total || 0), (p.total || 0) >= 0 ? "pos" : "neg", `realized ${signed(p.realized || 0)}`) +
+      kcard("Realized P&L", signed(p.realized || 0), (p.realized || 0) >= 0 ? "pos" : "neg", "booked today") +
+      kcard("Unrealized MTM", signed(p.unrealized || 0), (p.unrealized || 0) >= 0 ? "pos" : "neg", `${c.open_positions || 0} open positions`) +
+      kcard("Available Funds", inr(f.available || 0), "pos", `utilized ${inr(f.utilized || 0)}`) +
+      kcard("Total Balance", inr(f.total || 0), "", `opening ${inr(f.sod || 0)}`) +
+      kcard("Today Activity", `${c.trades || 0} fills`, "", `${c.orders || 0} orders (${c.pending_orders || 0} pending)`);
+    if ($("tmSidePos")) $("tmSidePos").textContent = c.total_positions || 0;
+    if ($("tmSideOrd")) $("tmSideOrd").textContent = c.orders || 0;
+    if ($("tmSideTrd")) $("tmSideTrd").textContent = c.trades || 0;
+    if ($("tmSideHld")) $("tmSideHld").textContent = c.holdings || 0;
+    document.querySelectorAll("#navTrade [data-tmtab]").forEach((x) => x.classList.toggle("active", x.dataset.tmtab === tmTab));
+    renderTradeBody();
+    if (_tmiState && $("tmInspectModal") && !$("tmInspectModal").classList.contains("hidden")) _tmiSyncLive();
+  }
+  function _tmPositionsTable(rows, ctrl, maxH) {
+    return rows.length
+      ? `<div class="table-scroll" style="max-height:${maxH || 480}px"><table class="data"><thead><tr>
+          <th style="text-align:left">Symbol</th><th>Side</th><th>Product</th><th>Net Qty</th><th>Capital</th><th>Avg</th><th>LTP</th><th>Realized</th><th>Unrealized</th><th>P&amp;L / ROI%</th><th></th>
+        </tr></thead><tbody>` + rows.map((r, idx) => {
+        const sc = r.side === "LONG" ? "pos" : r.side === "SHORT" ? "neg" : "";
+        const pc = r.pnl >= 0 ? "pos" : "neg";
+        const cap = r.capital_used != null ? r.capital_used : Math.abs(r.net_qty || 0) * (r.avg_price || 0);
+        const pct = r.pnl_pct != null ? r.pnl_pct : (cap > 0 ? (r.pnl / cap * 100) : 0);
+        const pctStr = cap > 0 ? ` <small>(${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%)</small>` : "";
+        const revBtn = (r.is_open && ctrl.can_reverse_position) ? `<button class="jbtn sm" data-rev-pos="${esc(r.id)}" data-sym="${esc(r.symbol)}" title="Reverse position">⇄ Rev</button>` : "";
+        const exBtn = (r.is_open && ctrl.can_exit_single) ? `<button class="jbtn danger sm" data-exit-pos="${esc(r.id)}" data-sym="${esc(r.symbol)}">Exit</button>` : "";
+        const act = [revBtn, exBtn].filter(Boolean).join(" ");
+        return `<tr class="tm-click-row" data-inspect-pos="${idx}" title="Click for chart, Capital/ROI, Target/SL/TL &amp; Reverse"><td style="text-align:left"><b>${esc(r.symbol)}</b></td><td class="${sc}">${esc(r.side)}</td><td>${esc(r.product)}</td>` +
+          `<td>${fmt(r.net_qty)}</td><td>${inr(cap)}</td><td>₹${fmt(r.avg_price, 2)}</td><td>₹${fmt(r.ltp, 2)}</td>` +
+          `<td class="${r.realized >= 0 ? "pos" : "neg"}">${signed(r.realized)}</td>` +
+          `<td class="${r.unrealized >= 0 ? "pos" : "neg"}">${signed(r.unrealized)}</td>` +
+          `<td class="${pc}"><b>${signed(r.pnl)}</b>${pctStr}</td><td style="white-space:nowrap">${act}</td></tr>`;
+      }).join("") + `</tbody></table></div>`
+      : `<p class="empty">No positions today.</p>`;
+  }
+  function _tmOrdersTable(rows, ctrl, maxH) {
+    return rows.length
+      ? `<div class="table-scroll" style="max-height:${maxH || 480}px"><table class="data"><thead><tr>
+          <th style="text-align:left">Time</th><th style="text-align:left">Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Price</th><th>Est. Cap</th><th>Status</th><th style="text-align:left">Note</th><th></th>
+        </tr></thead><tbody>` + rows.map((o, idx) => {
+        const sc = o.side === "BUY" ? "pos" : "neg";
+        const stCls = /TRADED|COMPLETE|FILLED/i.test(o.status) ? "bull" : /REJECT|CANCEL|EXPIRED/i.test(o.status) ? "bear" : "flat";
+        const act = (o.is_pending && ctrl.can_cancel_order) ? `<button class="jbtn danger sm" data-cancel-ord="${esc(o.id)}" data-sym="${esc(o.symbol)}">Cancel</button>` : "";
+        const cap = o.capital_used || 0;
+        return `<tr class="tm-click-row" data-inspect-ord="${idx}" title="Click to inspect order, view chart &amp; capital/margin details"><td style="text-align:left">${esc(o.time)}</td><td style="text-align:left"><b>${esc(o.symbol)}</b></td><td class="${sc}">${esc(o.side)}</td>` +
+          `<td>${esc(o.order_type)} · ${esc(o.product)}</td><td>${o.filled_qty}/${o.qty}</td><td>₹${fmt(o.price, 2)}</td>` +
+          `<td>${cap > 0 ? inr(cap) : "—"}</td>` +
+          `<td><span class="sig ${stCls}">${esc(o.status)}</span></td><td style="text-align:left">${esc(o.message || "—")}</td><td>${act}</td></tr>`;
+      }).join("") + `</tbody></table></div>`
+      : `<p class="empty">No orders placed today.</p>`;
+  }
+  function _tmTradesTable(rows, maxH) {
+    return rows.length
+      ? `<div class="table-scroll" style="max-height:${maxH || 480}px"><table class="data"><thead><tr>
+          <th style="text-align:left">Time</th><th style="text-align:left">Symbol</th><th>Side</th><th>Product</th><th>Qty</th><th>Price</th><th>Value</th>
+        </tr></thead><tbody>` + rows.map((tr, idx) =>
+        `<tr class="tm-click-row" data-inspect-trd="${idx}" title="Click for chart &amp; details"><td style="text-align:left">${esc(tr.time)}</td><td style="text-align:left"><b>${esc(tr.symbol)}</b></td>` +
+        `<td class="${tr.side === "BUY" ? "pos" : "neg"}">${esc(tr.side)}</td><td>${esc(tr.product)}</td>` +
+        `<td>${fmt(tr.qty)}</td><td>₹${fmt(tr.price, 2)}</td><td>${inr(tr.value)}</td></tr>`).join("") + `</tbody></table></div>`
+      : `<p class="empty">No executed trades today yet.</p>`;
+  }
+  function renderTradeBody() {
+    const d = tmData, body = $("tmodeBody"); if (!d || !body) return;
+    const ctrl = d.controls || {}, f = d.funds || {}, p = d.pnl || {};
+    if (tmTab === "overview") {
+      body.innerHTML = `<div class="tmode-split">` +
+        `<div class="tmode-box"><div class="tmode-sec-h"><span>⚡ Open &amp; Today Positions</span><button class="jbtn sm" type="button" data-jump-tmtab="positions">View all</button></div>${_tmPositionsTable(d.positions || [], ctrl, 260)}</div>` +
+        `<div class="tmode-box"><div class="tmode-sec-h"><span>💳 Funds &amp; Margin Breakdown</span><button class="jbtn sm" type="button" data-jump-tmtab="orders">Orders</button></div>` +
+        `<div class="tm-grid" style="margin-top:4px">` +
+        `<div class="tm-cell"><div class="k">Available Cash</div><div class="v pos">${inr(f.available || 0)}</div></div>` +
+        `<div class="tm-cell"><div class="k">Utilized Margin</div><div class="v">${inr(f.utilized || 0)}</div></div>` +
+        `<div class="tm-cell"><div class="k">SOD / Opening</div><div class="v">${inr(f.sod || 0)}</div></div>` +
+        `<div class="tm-cell"><div class="k">Total Balance</div><div class="v">${inr(f.total || 0)}</div></div>` +
+        `<div class="tm-cell"><div class="k">Holdings Value</div><div class="v">${inr(f.holdings_value || 0)}</div></div>` +
+        `<div class="tm-cell"><div class="k">Holdings P&amp;L</div><div class="v ${(p.holdings_pnl || 0) >= 0 ? "pos" : "neg"}">${signed(p.holdings_pnl || 0)}</div></div>` +
+        `</div></div></div>` +
+        `<div class="tmode-box" style="margin-top:12px"><div class="tmode-sec-h"><span>📋 Today Orders</span><button class="jbtn sm" type="button" data-jump-tmtab="trades">Today's Trades →</button></div>${_tmOrdersTable(d.orders || [], ctrl, 260)}</div>`;
+      return;
+    }
+    if (tmTab === "positions") {
+      body.innerHTML = `<div class="tmode-box"><div class="tmode-sec-h"><span>⚡ Positions (${(d.positions || []).length})</span></div>${_tmPositionsTable(d.positions || [], ctrl, 520)}</div>`;
+      return;
+    }
+    if (tmTab === "orders") {
+      body.innerHTML = `<div class="tmode-box"><div class="tmode-sec-h"><span>📋 Orders Today (${(d.orders || []).length})</span></div>${_tmOrdersTable(d.orders || [], ctrl, 520)}</div>`;
+      return;
+    }
+    if (tmTab === "trades") {
+      body.innerHTML = `<div class="tmode-box"><div class="tmode-sec-h"><span>✅ Executed Trades Today (${(d.trades || []).length})</span></div>${_tmTradesTable(d.trades || [], 520)}</div>`;
+      return;
+    }
+    if (tmTab === "holdings") {
+      const rows = d.holdings || [];
+      body.innerHTML = `<div class="tmode-box"><div class="tmode-sec-h"><span>💼 Portfolio Holdings (${rows.length})</span></div>` + (rows.length
+        ? `<div class="table-scroll" style="max-height:520px"><table class="data"><thead><tr>
+            <th style="text-align:left">Symbol</th><th>Qty</th><th>Avg Cost</th><th>LTP</th><th>Current Value</th><th>P&amp;L</th>
+          </tr></thead><tbody>` + rows.map((h) =>
+          `<tr><td style="text-align:left"><b>${esc(h.symbol)}</b></td><td>${fmt(h.qty)}</td><td>₹${fmt(h.avg_price, 2)}</td>` +
+          `<td>₹${fmt(h.ltp, 2)}</td><td>${inr(h.value)}</td><td class="${h.pnl >= 0 ? "pos" : "neg"}"><b>${signed(h.pnl)}</b></td></tr>`).join("") + `</tbody></table></div>`
+        : `<p class="empty">No portfolio holdings found.</p>`) + `</div>`;
+      return;
+    }
+    if (tmTab === "risk") {
+      let html = `<div class="tmode-risk">`;
+      if (ctrl.can_killswitch) {
+        const ksActive = ctrl.kill_switch === "ACTIVATE";
+        html += `<div class="tmode-box"><h3>🔌 Dhan Kill Switch</h3>` +
+          `<p class="modal-sub" style="margin:0 0 8px">Status: <b class="${ksActive ? "neg" : "pos"}">${esc(ctrl.kill_switch || "DEACTIVATE")}</b> — locks all order placement for the rest of the day.</p>` +
+          `<button class="jbtn ${ksActive ? "primary" : "danger"}" data-ks-set="${ksActive ? "DEACTIVATE" : "ACTIVATE"}">${ksActive ? "Deactivate Kill Switch" : "Activate Kill Switch"}</button></div>`;
+      }
+      if (ctrl.can_pnl_exit) {
+        const pe = ctrl.pnl_exit || {};
+        html += `<div class="tmode-box"><h3>🛡 Dhan Auto P&amp;L Exit</h3>` +
+          `<p class="modal-sub" style="margin:0 0 6px">Auto-square-off intraday positions at your day target or max loss.</p>` +
+          `<div class="tmode-form">` +
+          `<label>Max Profit ₹<input id="tmProfVal" type="number" min="0" step="500" value="${esc(pe.profitValue || "")}" placeholder="e.g. 5000"/></label>` +
+          `<label>Max Loss ₹<input id="tmLossVal" type="number" min="0" step="500" value="${esc(pe.lossValue || "")}" placeholder="e.g. 3000"/></label>` +
+          `<label style="flex-direction:row;align-items:center;gap:5px"><input id="tmExitKs" type="checkbox" ${pe.enableKillSwitch ? "checked" : ""}/> Kill Switch</label>` +
+          `<button id="tmPnlExitSave" class="jbtn primary" type="button">Save Rule</button>` +
+          `<button id="tmPnlExitClear" class="jbtn" type="button">Disable</button>` +
+          `</div></div>`;
+      }
+      if (!ctrl.can_killswitch && !ctrl.can_pnl_exit) {
+        html += `<div class="tmode-box"><h3>⚡ Emergency Position Exit</h3>` +
+          `<p class="modal-sub" style="margin:0 0 8px">Square off open positions individually from the <b>Positions</b> tab or exit all open positions at once.</p>` +
+          `<button class="jbtn danger" type="button" onclick="document.getElementById('tmodeExitAll')?.click()">⚡ Exit All Open Positions</button></div>`;
+      }
+      html += `</div>`;
+      body.innerHTML = html;
+      return;
+    }
+    // Reports & Ledger tab
+    let html = "";
+    if (!tmReports) {
+      html += `<p class="modal-sub">Loading broker ledger, charges &amp; P&amp;L reports…</p>`;
+    } else {
+      const led = tmReports.ledger || [], chg = tmReports.charges || [], rls = tmReports.realised || [];
+      if (chg.length) {
+        html += `<h3 style="margin:8px 0 6px;font-size:13px">Charges History (30D)</h3><pre class="jnote" style="overflow:auto;max-height:180px">${esc(JSON.stringify(chg.slice(0, 12), null, 2))}</pre>`;
+      }
+      if (rls.length) {
+        html += `<h3 style="margin:10px 0 6px;font-size:13px">Realised P&amp;L History (30D)</h3><pre class="jnote" style="overflow:auto;max-height:180px">${esc(JSON.stringify(rls.slice(0, 12), null, 2))}</pre>`;
+      }
+      if (led.length) {
+        const cols = Object.keys(led[0]).slice(0, 6);
+        html += `<h3 style="margin:10px 0 6px;font-size:13px">Ledger (Last 30 Days)</h3><div class="table-scroll" style="max-height:360px"><table class="data"><thead><tr>` +
+          cols.map((k) => `<th style="text-align:left">${esc(k)}</th>`).join("") + `</tr></thead><tbody>` +
+          led.slice(0, 40).map((row) => `<tr>` + cols.map((k) => `<td style="text-align:left">${esc(row[k] == null ? "" : String(row[k]))}</td>`).join("") + `</tr>`).join("") +
+          `</tbody></table></div>`;
+      } else if (!chg.length && !rls.length) {
+        html += `<p class="modal-sub">No recent ledger or charges records in the last 30 days.</p>`;
+      }
+    }
+    body.innerHTML = html;
+  }
+  setInterval(() => {
+    const v = $("viewTradeMode");
+    if (!v || v.classList.contains("hidden")) return;
+    if ($("tmodeAuto") && !$("tmodeAuto").checked) { _tmSetTimer("⏸ off", "paused"); tmCountdown = TM_REFRESH_SEC; return; }
+    if (typeof marketStatus === "function" && !marketStatus().open) { _tmSetTimer("⏸ paused", "paused"); tmCountdown = TM_REFRESH_SEC; return; }
+    if (document.hidden) { _tmSetTimer("⏸ paused", "paused"); return; }
+    tmCountdown -= 1;
+    if (tmCountdown <= 0) {
+      _tmSetTimer("⟳ …", "due");
+      tmCountdown = TM_REFRESH_SEC;
+      loadTradeMode({ silent: true });
+    } else {
+      _tmSetTimer("⏱ " + tmCountdown + "s");
+    }
+  }, 1000);
+
+  // ------------------------------------------------ Trade Mode Inspector Modal
+  let _tmiTv = null, _tmiSeries = null, _tmiRo = null, _tmiState = null;
+  let _tmiPriceLines = [];
+
+  function _clearTmiChart() {
+    if (_tmiRo) { try { _tmiRo.disconnect(); } catch (e) { } _tmiRo = null; }
+    if (_tmiTv) { try { _tmiTv.remove(); } catch (e) { } _tmiTv = null; }
+    _tmiSeries = null;
+    _tmiPriceLines = [];
+  }
+  function _tmiMsg(msg, err) {
+    const el = $("tmiStatusBanner");
+    if (!el) return;
+    if (!msg) { el.classList.add("hidden"); return; }
+    el.className = "jnote" + (err ? " err" : "");
+    el.textContent = msg;
+    el.classList.remove("hidden");
+  }
+  function _parseMarginHint(msg) {
+    const m = String(msg || "").match(/add\s+(?:Rs\.?|₹)\s*([\d,]+(?:\.\d+)?)/i);
+    return m ? Number(m[1].replace(/,/g, "")) : 0;
+  }
+  function _tmiResolveCtx() {
+    if (!_tmiState) return {};
+    const sym = _tmiState.symbol;
+    const pos = (tmData?.positions || []).find((p) =>
+      (_tmiState.kind === "position" && p.id === _tmiState.id) || (p.symbol && p.symbol === sym)
+    ) || (_tmiState.kind === "position" ? _tmiState.item : null);
+    const ord = (_tmiState.kind === "order")
+      ? ((tmData?.orders || []).find((o) => o.id === _tmiState.id) || _tmiState.item)
+      : null;
+    const trd = (_tmiState.kind === "trade")
+      ? ((tmData?.trades || []).find((t) => t.id === _tmiState.id) || _tmiState.item)
+      : null;
+    const relOrders = (tmData?.orders || []).filter((o) => o.symbol === sym);
+    const relTrades = (tmData?.trades || []).filter((t) => t.symbol === sym);
+    return { pos, ord, trd, relOrders, relTrades, quote: _tmiState.quote };
+  }
+  function _tmiSetOhlc(label, bar) {
+    const el = $("tmiOhlcBar");
+    if (!el) return;
+    if (!bar) { el.innerHTML = esc(label || ""); return; }
+    const chg = bar.close - bar.open;
+    const pct = bar.open ? (chg / bar.open) * 100 : 0;
+    const cls = chg >= 0 ? "pos" : "neg";
+    const tStr = typeof bar.time === "number" ? _istFmt.format(new Date(bar.time * 1000)) : (bar.t || "");
+    el.innerHTML =
+      `<b>${esc(label)}</b>` +
+      (tStr ? `<span>${esc(tStr)} IST</span>` : "") +
+      `<span>O <b class="${cls}">${fmt(bar.open, 2)}</b></span>` +
+      `<span>H <b class="${cls}">${fmt(bar.high, 2)}</b></span>` +
+      `<span>L <b class="${cls}">${fmt(bar.low, 2)}</b></span>` +
+      `<span>C <b class="${cls}">${fmt(bar.close, 2)}</b></span>` +
+      `<span class="${cls}">${chg >= 0 ? "+" : ""}${fmt(chg, 2)} (${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)</span>`;
+  }
+  function _tmiSyncChartLines() {
+    if (!_tmiSeries || !_tmiState || _tmiState.mode !== "contract") return;
+    for (const pl of _tmiPriceLines) { try { _tmiSeries.removePriceLine(pl); } catch (e) { } }
+    _tmiPriceLines = [];
+    const { pos, ord, quote } = _tmiResolveCtx();
+    const cs = getComputedStyle(document.documentElement);
+    const upCol = (cs.getPropertyValue("--put") || "#089981").trim();
+    const dnCol = (cs.getPropertyValue("--call") || "#f23645").trim();
+    const entry = Number(pos?.avg_price || ord?.price || _tmiState.item?.price || 0);
+    const ltp = Number(quote?.ltp || pos?.ltp || ord?.ltp || 0);
+    const tp = Number($("tmiTp")?.value || 0);
+    const sl = Number($("tmiSl")?.value || 0);
+    if (entry > 0) _tmiPriceLines.push(_tmiSeries.createPriceLine({ price: entry, color: "#3b82f6", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "Entry" }));
+    if (ltp > 0) _tmiPriceLines.push(_tmiSeries.createPriceLine({ price: ltp, color: "#f59e0b", lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: "LTP" }));
+    if (tp > 0) _tmiPriceLines.push(_tmiSeries.createPriceLine({ price: tp, color: upCol, lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: "Target" }));
+    if (sl > 0) _tmiPriceLines.push(_tmiSeries.createPriceLine({ price: sl, color: dnCol, lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: "SL" }));
+  }
+  function _tmiRenderChart() {
+    if (!_tmiState) return;
+    _clearTmiChart();
+    const tvEl = $("tmiTvChart"), emptyEl = $("tmiChartEmpty");
+    const seg = $("tmiModeSeg"), pivBtn = $("tmiPivotBtn");
+    const hasCon = (_tmiState.candles || []).length >= 2;
+    const hasUnd = _tmiState.underlying && (_tmiState.underlying.points || []).length >= 2;
+    const undSym = _tmiState.underlying?.symbol || _tmiState.underlying_symbol || "Spot";
+    const buttons = [];
+    if (hasCon) buttons.push(["contract", `${_tmiState.symbol.split(":").pop().slice(0, 22)} · ${_tmiState.tf}m`]);
+    if (hasUnd) buttons.push(["underlying", `${undSym} ${_tmiState.tf}m Spot`]);
+    if (!hasCon && !hasUnd) _tmiState.mode = "none";
+    else if (_tmiState.mode === "contract" && !hasCon) _tmiState.mode = "underlying";
+    else if (_tmiState.mode === "underlying" && !hasUnd) _tmiState.mode = "contract";
+    else if (!hasCon && hasUnd) _tmiState.mode = "underlying";
+    if (seg) {
+      seg.innerHTML = buttons.map(([id, lbl]) => `<button type="button" class="${_tmiState.mode === id ? "active" : ""}" data-tmi-mode="${id}">${esc(lbl)}</button>`).join("");
+      seg.classList.toggle("hidden", buttons.length < 2);
+      seg.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+        _tmiState.mode = b.dataset.tmiMode;
+        _tmiRenderChart();
+      }));
+    }
+    if (pivBtn) {
+      const showP = _tmiState.mode === "underlying" && !!(_tmiState.underlying && _tmiState.underlying.pivots);
+      pivBtn.classList.toggle("hidden", !showP);
+      pivBtn.classList.toggle("active", !!_tmiState.showPivots);
+    }
+    document.querySelectorAll("#tmiTfSeg button").forEach((b) => b.classList.toggle("active", b.dataset.tmiTf === _tmiState.tf));
+    const rawBars = _tmiState.mode === "contract" ? (_tmiState.candles || []) : (_tmiState.underlying?.points || []);
+    const label = _tmiState.mode === "contract" ? `${_tmiState.symbol} · ${_tmiState.tf}m` : `${undSym} · ${_tmiState.tf}m Spot`;
+    if (!tvEl || typeof LightweightCharts === "undefined" || rawBars.length < 2) {
+      if (emptyEl) {
+        emptyEl.textContent = _tmiState.loadingChart ? "Loading live intraday chart…" : "No intraday candles available for this symbol right now.";
+        emptyEl.classList.remove("hidden");
+      }
+      _tmiSetOhlc(label, null);
+      return;
+    }
+    if (emptyEl) emptyEl.classList.add("hidden");
+    const cs = getComputedStyle(document.documentElement);
+    const bg = (cs.getPropertyValue("--panel-2") || "#131722").trim();
+    const muted = (cs.getPropertyValue("--muted") || "#787b86").trim();
+    const grid = (cs.getPropertyValue("--line") || "rgba(128,128,128,0.14)").trim();
+    const upCol = (cs.getPropertyValue("--put") || "#089981").trim();
+    const dnCol = (cs.getPropertyValue("--call") || "#f23645").trim();
+    const seen = new Set(), bars = [];
+    for (const p of rawBars) {
+      const time = Number(p.ts);
+      if (!time || seen.has(time) || p.o == null || p.c == null) continue;
+      seen.add(time);
+      bars.push({ time, open: +p.o, high: +p.h, low: +p.l, close: +p.c, t: p.t });
+    }
+    bars.sort((a, b) => a.time - b.time);
+    if (bars.length < 2) { if (emptyEl) emptyEl.classList.remove("hidden"); return; }
+    _tmiTv = LightweightCharts.createChart(tvEl, {
+      width: tvEl.clientWidth || 760,
+      height: tvEl.clientHeight || 310,
+      layout: { background: { color: bg }, textColor: muted, fontFamily: "system-ui, -apple-system, sans-serif", fontSize: 11 },
+      grid: { vertLines: { color: grid, style: 1 }, horzLines: { color: grid, style: 1 } },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      rightPriceScale: { borderColor: grid, scaleMargins: { top: 0.14, bottom: 0.14 } },
+      timeScale: {
+        borderColor: grid, timeVisible: true, secondsVisible: false, rightOffset: 4,
+        tickMarkFormatter: (time) => _istFmt.format(new Date(Number(time) * 1000)),
+      },
+      localization: { timeFormatter: (time) => _istFmt.format(new Date(Number(time) * 1000)) },
+    });
+    _tmiSeries = _tmiTv.addCandlestickSeries({
+      upColor: upCol, downColor: dnCol, borderUpColor: upCol, borderDownColor: dnCol,
+      wickUpColor: upCol, wickDownColor: dnCol,
+    });
+    _tmiSeries.setData(bars);
+    if (_tmiState.mode === "underlying" && _tmiState.showPivots && _tmiState.underlying?.pivots) {
+      const pv = _tmiState.underlying.pivots;
+      [["r3", "R3", "#2563eb"], ["r2", "R2", "#2563eb"], ["r1", "R1", "#3b82f6"], ["p", "P", "#60a5fa"], ["s1", "S1", "#3b82f6"], ["s2", "S2", "#2563eb"]]
+        .forEach(([k, lbl, col]) => {
+          if (pv[k] != null) _tmiSeries.createPriceLine({ price: +pv[k], color: col, lineWidth: k === "p" ? 2 : 1, lineStyle: 2, axisLabelVisible: true, title: lbl });
+        });
+    } else {
+      _tmiSyncChartLines();
+    }
+    _tmiTv.timeScale().fitContent();
+    const last = bars[bars.length - 1];
+    _tmiSetOhlc(label, last);
+    _tmiTv.subscribeCrosshairMove((param) => {
+      const d = param && param.seriesData ? param.seriesData.get(_tmiSeries) : null;
+      _tmiSetOhlc(label, d || last);
+    });
+    if (typeof ResizeObserver !== "undefined") {
+      _tmiRo = new ResizeObserver(() => {
+        if (_tmiTv && tvEl.clientWidth > 0) _tmiTv.applyOptions({ width: tvEl.clientWidth, height: tvEl.clientHeight });
+      });
+      _tmiRo.observe(tvEl);
+    }
+  }
+  async function _tmiFetchChart() {
+    if (!_tmiState) return;
+    const seq = ++_tmiState.fetchSeq;
+    _tmiState.loadingChart = true;
+    const { pos, ord } = _tmiResolveCtx();
+    const secId = pos?.security_id || ord?.security_id || _tmiState.item?.security_id || "";
+    const seg = pos?.exchange_segment || ord?.exchange_segment || _tmiState.item?.exchange_segment || "";
+    const exp = pos?.drv_expiry || ord?.drv_expiry || _tmiState.item?.drv_expiry || "";
+    try {
+      const qs = `?symbol=${encodeURIComponent(_tmiState.symbol)}&date=${encodeURIComponent(tmData?.today || "")}` +
+        `&timeframe=${encodeURIComponent(_tmiState.tf)}&sec_id=${encodeURIComponent(secId)}` +
+        `&exchange_segment=${encodeURIComponent(seg)}&expiry=${encodeURIComponent(exp)}`;
+      const d = await (await fetch("/api/trademode/inspect" + qs)).json();
+      if (!_tmiState || _tmiState.fetchSeq !== seq) return;
+      _tmiState.loadingChart = false;
+      _tmiState.candles = d.candles || [];
+      _tmiState.underlying = d.underlying || null;
+      _tmiState.underlying_symbol = d.underlying_symbol || "";
+      if (d.quote && d.quote.ltp) _tmiState.quote = d.quote;
+      _tmiState.mode = _tmiState.candles.length >= 2 ? "contract" : (_tmiState.underlying?.points?.length >= 2 ? "underlying" : "none");
+      if ($("tmiChartNote")) {
+        $("tmiChartNote").textContent = d.note || "";
+        $("tmiChartNote").classList.toggle("hidden", !d.note);
+      }
+      _tmiRenderChart();
+      _tmiRenderDetails();
+    } catch (e) {
+      if (_tmiState && _tmiState.fetchSeq === seq) {
+        _tmiState.loadingChart = false;
+        _tmiRenderChart();
+      }
+    }
+  }
+  function _tmiRenderDetails() {
+    if (!_tmiState) return;
+    const { pos, ord, trd, quote } = _tmiResolveCtx();
+    const item = pos || ord || trd || _tmiState.item || {};
+    const side = pos?.side || ord?.side || trd?.side || "";
+    const isLong = side === "LONG" || side === "BUY";
+    const isShort = side === "SHORT" || side === "SELL";
+    const ltp = Number(quote?.ltp || pos?.ltp || ord?.ltp || 0);
+    const avg = Number(pos?.avg_price || ord?.price || trd?.price || 0);
+    const qty = pos ? Math.abs(pos.net_qty || 0) || Math.max(pos.buy_qty || 0, pos.sell_qty || 0) : Number(ord?.qty || trd?.qty || 0);
+    const capUsed = pos
+      ? Number(pos.capital_used || (Math.abs(pos.net_qty || 0) * avg) || 0)
+      : Number(ord?.capital_used || trd?.value || (qty * (avg || ltp)) || 0);
+    const runPnl = pos ? Number(pos.pnl || 0) : null;
+    const roiPct = (pos && capUsed > 0) ? (runPnl / capUsed * 100) : null;
+    const pts = (pos && pos.is_open && ltp > 0 && avg > 0) ? (pos.net_qty > 0 ? (ltp - avg) : (avg - ltp)) : 0;
+    const mvPct = (avg > 0 && pos?.is_open) ? (pts / avg * 100) : 0;
+    const shortfall = _parseMarginHint(ord?.message);
+
+    $("tmiTitle").textContent = _tmiState.symbol || "Instrument";
+    $("tmiSide").textContent = side || "—";
+    $("tmiSide").className = "sig " + (isLong ? "bull" : (isShort ? "bear" : ""));
+    const stB = $("tmiStatusBadge");
+    if (ord?.status) {
+      stB.textContent = ord.status;
+      stB.className = "badge";
+      stB.classList.remove("hidden");
+    } else if (pos) {
+      stB.textContent = pos.is_open ? "RUNNING" : "CLOSED";
+      stB.className = "badge";
+      stB.classList.remove("hidden");
+    } else {
+      stB.classList.add("hidden");
+    }
+    const pnlEl = $("tmiPnl");
+    if (runPnl != null) {
+      const pTxt = signed(runPnl) + (roiPct != null ? ` (${roiPct >= 0 ? "+" : ""}${roiPct.toFixed(2)}%)` : "");
+      pnlEl.textContent = pTxt;
+      pnlEl.className = "tm-pnl " + (runPnl >= 0 ? "pos" : "neg");
+    } else {
+      pnlEl.textContent = capUsed > 0 ? `Est. ${inr(capUsed)}` : (ltp > 0 ? `LTP ₹${fmt(ltp, 2)}` : "—");
+      pnlEl.className = "tm-pnl";
+    }
+    $("tmiSub").textContent = [
+      item.product, item.exchange_segment || item.exchange, item.time || tmData?.today,
+      (tmData?.source || "").toUpperCase(), ord?.id ? `#${ord.id}` : "",
+    ].filter(Boolean).join(" · ");
+
+    if (ord?.message && /REJECT|INSUFFICIENT|FAIL|ERROR/i.test(ord.status + " " + ord.message)) {
+      _tmiMsg(`Broker Note (${ord.status}): ${ord.message}`, true);
+    }
+
+    const cell = (k, v, cls) => `<div class="tm-cell"><div class="k">${k}</div><div class="v ${cls || ""}">${v}</div></div>`;
+    let html = "";
+    html += cell("Capital Used", capUsed > 0 ? inr(capUsed) : "—");
+    if (pos) {
+      html += cell("Running P&L", `${signed(runPnl)}`, runPnl >= 0 ? "pos" : "neg");
+      html += cell("Profit / ROI %", roiPct != null ? `${roiPct >= 0 ? "+" : ""}${roiPct.toFixed(2)}%` : "—", (roiPct || 0) >= 0 ? "pos" : "neg");
+      html += cell("Live LTP", ltp > 0 ? `₹${fmt(ltp, 2)}` : "—");
+      html += cell("Entry / Avg", avg > 0 ? `₹${fmt(avg, 2)}` : "—");
+      html += cell("Move (Pts / %)", pos.is_open && ltp > 0 ? `${pts >= 0 ? "+" : ""}${fmt(pts, 2)} (${mvPct >= 0 ? "+" : ""}${mvPct.toFixed(2)}%)` : "CLOSED", pts >= 0 ? "pos" : "neg");
+      html += cell("Realized / Unrealized", `${signed(pos.realized || 0)} / ${signed(pos.unrealized || 0)}`);
+      html += cell("Qty (Buy / Sell)", `${fmt(pos.net_qty)} (${pos.buy_qty || 0} / ${pos.sell_qty || 0})`);
+    } else if (ord) {
+      html += cell("Order Status", esc(ord.status || "—"), /TRADED/i.test(ord.status) ? "pos" : (/REJECT|CANCEL/i.test(ord.status) ? "neg" : ""));
+      html += cell("Required Margin / Value", shortfall > 0 ? `${inr(shortfall)} shortfall` : (capUsed > 0 ? inr(capUsed) : "—"));
+      html += cell("Live LTP", ltp > 0 ? `₹${fmt(ltp, 2)}` : "—");
+      html += cell("Order / Trigger Price", `${ord.price > 0 ? "₹" + fmt(ord.price, 2) : "MARKET"}${ord.stop_price > 0 ? " · SL ₹" + fmt(ord.stop_price, 2) : ""}`);
+      html += cell("Quantity (Filled)", `${ord.filled_qty || 0} / ${ord.qty || 0}`);
+      html += cell("Order Type · Validity", `${esc(ord.order_type || "—")} · ${esc(ord.validity || "DAY")}`);
+      html += cell("Broker Message", esc(ord.message || "—"));
+    } else {
+      html += cell("Trade Value", inr(trd?.value || capUsed));
+      html += cell("Executed Price", `₹${fmt(trd?.price || 0, 2)}`);
+      html += cell("Live LTP", ltp > 0 ? `₹${fmt(ltp, 2)}` : "—");
+      html += cell("Quantity", fmt(qty));
+      html += cell("Order ID", esc(trd?.order_id || trd?.id || "—"));
+      html += cell("Product", esc(trd?.product || "—"));
+      html += cell("Time", esc(trd?.time || "—"));
+    }
+    $("tmiDetails").innerHTML = html;
+  }
+  function _tmiUpdateRR() {
+    const rrEl = $("tmiRRPreview");
+    if (!rrEl || !_tmiState) return;
+    const { pos, ord } = _tmiResolveCtx();
+    const ref = Number(pos?.avg_price || pos?.ltp || ord?.ltp || ord?.price || _tmiState.quote?.ltp || 0);
+    const q = Number($("tmiCtrlQty")?.value || Math.abs(pos?.net_qty || 0) || ord?.qty || 0);
+    const isLong = pos ? (pos.net_qty >= 0) : ((ord?.side || "") === "BUY");
+    const tp = Number($("tmiTp")?.value || 0), sl = Number($("tmiSl")?.value || 0);
+    if (!ref || !q || (!tp && !sl)) { rrEl.textContent = "Enter Target and/or Stop Loss prices to preview profit/risk and R:R."; return; }
+    const parts = [];
+    let reward = 0, risk = 0;
+    if (tp > 0) {
+      reward = (isLong ? (tp - ref) : (ref - tp)) * q;
+      const pct = ((isLong ? (tp - ref) : (ref - tp)) / ref * 100);
+      parts.push(`Target: <b class="${reward >= 0 ? "pos" : "neg"}">${signed(reward)} (${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%)</b>`);
+    }
+    if (sl > 0) {
+      risk = (isLong ? (sl - ref) : (ref - sl)) * q;
+      const pct = ((isLong ? (sl - ref) : (ref - sl)) / ref * 100);
+      parts.push(`SL: <b class="${risk >= 0 ? "pos" : "neg"}">${signed(risk)} (${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%)</b>`);
+    }
+    if (tp > 0 && sl > 0 && risk < 0 && reward > 0) {
+      parts.push(`R:R <b>1 : ${(reward / Math.abs(risk)).toFixed(2)}</b>`);
+    }
+    rrEl.innerHTML = parts.join(" · ");
+    _tmiSyncChartLines();
+  }
+  function _tmiRenderActions() {
+    const el = $("tmiActions");
+    if (!el || !_tmiState) return;
+    const { pos, ord, quote } = _tmiResolveCtx();
+    const ctrl = tmData?.controls || {};
+    let html = "";
+
+    if (pos && pos.is_open) {
+      const ref = Number(pos.ltp || pos.avg_price || quote?.ltp || 0);
+      const q = Math.abs(pos.net_qty || 0);
+      const flipSide = pos.net_qty > 0 ? "SELL" : "BUY";
+      const flipTo = pos.net_qty > 0 ? "SHORT" : "LONG";
+      html += `<div class="tmi-panel">` +
+        `<h3><span>🎯 Set Target (TP) · Stop Loss (SL) · Trail (TL)</span><small style="color:var(--muted)">Ref ₹${fmt(ref, 2)}</small></h3>` +
+        `<div class="tmi-form">` +
+        `<label>Target TP ₹<input id="tmiTp" type="number" step="0.05" placeholder="e.g. ${ref ? fmt(pos.net_qty > 0 ? ref * 1.15 : ref * 0.85, 2) : ""}"/></label>` +
+        `<label>Stop Loss SL ₹<input id="tmiSl" type="number" step="0.05" placeholder="e.g. ${ref ? fmt(pos.net_qty > 0 ? ref * 0.90 : ref * 1.10, 2) : ""}"/></label>` +
+        `<label>Trail Jump TL ₹<input id="tmiTl" type="number" step="0.5" min="0" placeholder="optional"/></label>` +
+        `<label>Qty<input id="tmiCtrlQty" type="number" min="1" value="${q}"/></label>` +
+        `</div>` +
+        `<div class="tmi-chips">` +
+        `<button class="tmi-chip" type="button" data-tmi-preset="sl:5">SL 5%</button>` +
+        `<button class="tmi-chip" type="button" data-tmi-preset="sl:10">SL 10%</button>` +
+        `<button class="tmi-chip" type="button" data-tmi-preset="sl:20">SL 20%</button>` +
+        `<button class="tmi-chip" type="button" data-tmi-preset="tp:10">TP +10%</button>` +
+        `<button class="tmi-chip" type="button" data-tmi-preset="tp:20">TP +20%</button>` +
+        `<button class="tmi-chip" type="button" data-tmi-preset="tp:40">TP +40%</button>` +
+        `</div>` +
+        `<div id="tmiRRPreview" class="tmi-rr">Enter Target and/or Stop Loss prices to preview profit/risk and R:R.</div>` +
+        `<div class="tmi-btn-row">` +
+        `<button id="tmiPlaceTpSlBtn" class="jbtn primary sm" type="button">🎯 Place TP / SL Orders</button>` +
+        `</div></div>`;
+
+      html += `<div class="tmi-panel">` +
+        `<h3>⚡ Position Controls</h3>` +
+        `<p class="modal-sub" style="margin:0 0 8px">Running: <b>${esc(pos.side)} ${q}</b> · Avg ₹${fmt(pos.avg_price, 2)} · LTP ₹${fmt(ref, 2)}<br/>Reversing places <b>${flipSide} ${q * 2} MARKET</b> to flip ${esc(pos.side)} → <b>${flipTo} ${q}</b>.</p>` +
+        `<div class="tmi-btn-row">` +
+        (ctrl.can_reverse_position !== false ? `<button id="tmiReverseBtn" class="jbtn sm" type="button">⇄ Reverse (${flipSide} ${q * 2})</button>` : "") +
+        (ctrl.can_exit_single !== false ? `<button id="tmiExitBtn" class="jbtn danger sm" type="button">✕ Exit Position (${q})</button>` : "") +
+        `</div></div>`;
+    }
+
+    if (ord && ord.is_pending) {
+      html += `<div class="tmi-panel">` +
+        `<h3>✏️ Modify / Cancel Pending Order (#${esc(ord.id)})</h3>` +
+        `<div class="tmi-form">` +
+        `<label>Order Type<select id="tmiModType"><option value="LIMIT" ${/LIMIT/i.test(ord.order_type) && !/SL/i.test(ord.order_type) ? "selected" : ""}>LIMIT</option><option value="MARKET" ${/MARKET/i.test(ord.order_type) && !/SL/i.test(ord.order_type) ? "selected" : ""}>MARKET</option><option value="SL-M" ${/SL-M|STOP_LOSS_MARKET/i.test(ord.order_type) ? "selected" : ""}>SL-M</option><option value="SL-L" ${/SL-L|STOP_LOSS$/i.test(ord.order_type) ? "selected" : ""}>SL-L</option></select></label>` +
+        `<label>Qty<input id="tmiModQty" type="number" min="1" value="${ord.qty || 1}"/></label>` +
+        `<label>Price ₹<input id="tmiModPrice" type="number" step="0.05" value="${ord.price || 0}"/></label>` +
+        `<label>Trigger / SL ₹<input id="tmiModStop" type="number" step="0.05" value="${ord.stop_price || 0}"/></label>` +
+        `</div>` +
+        `<div class="tmi-btn-row">` +
+        `<button id="tmiModSaveBtn" class="jbtn primary sm" type="button">💾 Save Modification</button>` +
+        `<button id="tmiCancelOrdBtn" class="jbtn danger sm" type="button">✕ Cancel Order</button>` +
+        `</div></div>`;
+    }
+
+    if ((!pos || !pos.is_open) && ord && !ord.is_pending) {
+      const ref = Number(quote?.ltp || ord.ltp || ord.price || 0);
+      html += `<div class="tmi-panel">` +
+        `<h3>⚡ Place Fresh Order (with Target · SL · Trail TL)</h3>` +
+        `<div class="tmi-form">` +
+        `<label>Side<select id="tmiNewSide"><option value="BUY" ${ord.side === "BUY" ? "selected" : ""}>BUY</option><option value="SELL" ${ord.side === "SELL" ? "selected" : ""}>SELL</option></select></label>` +
+        `<label>Type<select id="tmiNewType"><option value="MARKET">MARKET</option><option value="LIMIT">LIMIT</option></select></label>` +
+        `<label>Qty<input id="tmiNewQty" type="number" min="1" value="${ord.qty || 1}"/></label>` +
+        `<label>Price ₹<input id="tmiNewPrice" type="number" step="0.05" value="${ref || ord.price || 0}"/></label>` +
+        `<label>Target TP ₹<input id="tmiNewTp" type="number" step="0.05" placeholder="optional"/></label>` +
+        `<label>Stop Loss SL ₹<input id="tmiNewSl" type="number" step="0.05" placeholder="optional"/></label>` +
+        `<label>Trail Jump TL ₹<input id="tmiNewTl" type="number" step="0.5" min="0" placeholder="optional"/></label>` +
+        `</div>` +
+        `<div class="tmi-btn-row"><button id="tmiPlaceNewBtn" class="jbtn primary sm" type="button">⚡ Place Order</button></div></div>`;
+    }
+
+    el.innerHTML = html;
+  }
+  function _tmiRenderRelated() {
+    const el = $("tmiRelated");
+    if (!el || !_tmiState) return;
+    const { relOrders, relTrades } = _tmiResolveCtx();
+    const ctrl = tmData?.controls || {};
+    let html = "";
+    if (relOrders.length) {
+      html += `<div class="tmi-panel"><h3 style="margin-bottom:6px">📋 Today's Orders on ${esc(_tmiState.symbol)} (${relOrders.length})</h3>` +
+        _tmOrdersTable(relOrders, ctrl, 180) + `</div>`;
+    }
+    if (relTrades.length) {
+      html += `<div class="tmi-panel" style="margin-top:8px"><h3 style="margin-bottom:6px">✅ Executed Fills (${relTrades.length})</h3>` +
+        _tmTradesTable(relTrades, 160) + `</div>`;
+    }
+    el.innerHTML = html;
+  }
+  function _tmiSyncLive() {
+    if (!_tmiState) return;
+    _tmiRenderDetails();
+    _tmiRenderRelated();
+    _tmiSyncChartLines();
+    if (_tmiState.posOpenState !== !!_tmiResolveCtx().pos?.is_open) {
+      _tmiState.posOpenState = !!_tmiResolveCtx().pos?.is_open;
+      _tmiRenderActions();
+    } else {
+      _tmiUpdateRR();
+    }
+  }
+  function openTmInspect({ kind, item }) {
+    const modal = $("tmInspectModal");
+    if (!modal || !item) return;
+    _clearTmiChart();
+    _tmiMsg("");
+    _tmiState = {
+      kind,
+      id: String(item.id || ""),
+      symbol: String(item.symbol || ""),
+      item,
+      tf: "5",
+      mode: "contract",
+      showPivots: true,
+      loadingChart: true,
+      candles: [],
+      underlying: null,
+      quote: null,
+      fetchSeq: 0,
+      posOpenState: !!(kind === "position" ? item.is_open : _tmiResolveCtx?.()?.pos?.is_open),
+    };
+    _tmiState.posOpenState = !!_tmiResolveCtx().pos?.is_open;
+    $("tmiChartNote")?.classList.add("hidden");
+    modal.classList.remove("hidden");
+    _tmiRenderDetails();
+    _tmiRenderActions();
+    _tmiRenderRelated();
+    _tmiRenderChart();
+    _tmiFetchChart();
+  }
+  function _closeTmInspect() {
+    _clearTmiChart();
+    _tmiState = null;
+    if ($("tmInspectModal")) $("tmInspectModal").classList.add("hidden");
+  }
+  if ($("tmiClose")) $("tmiClose").addEventListener("click", _closeTmInspect);
+  if ($("tmInspectModal")) $("tmInspectModal").addEventListener("click", (e) => {
+    if (e.target === $("tmInspectModal")) _closeTmInspect();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && $("tmInspectModal") && !$("tmInspectModal").classList.contains("hidden")) _closeTmInspect();
+  });
+  if ($("tmiRefreshBtn")) $("tmiRefreshBtn").addEventListener("click", () => { loadTradeMode({ silent: true }); _tmiFetchChart(); });
+  if ($("tmiPivotBtn")) $("tmiPivotBtn").addEventListener("click", () => {
+    if (!_tmiState) return;
+    _tmiState.showPivots = !_tmiState.showPivots;
+    _tmiRenderChart();
+  });
+  if ($("tmiTfSeg")) $("tmiTfSeg").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-tmi-tf]");
+    if (!b || !_tmiState) return;
+    _tmiState.tf = b.dataset.tmiTf;
+    _tmiFetchChart();
+  });
+  if ($("tmiRelated")) $("tmiRelated").addEventListener("click", async (e) => {
+    const cBtn = e.target.closest("[data-cancel-ord]");
+    if (!cBtn) return;
+    const oid = cBtn.dataset.cancelOrd, sym = cBtn.dataset.sym || oid;
+    if (!confirm(`Cancel pending order ${sym} (#${oid})?`)) return;
+    try {
+      const r = await fetch("/api/trademode/cancel-order", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: oid }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || "Cancel failed");
+      _tmiMsg(`✅ Cancelled order #${oid}.`);
+      loadTradeMode({ silent: true });
+    } catch (err) { _tmiMsg("Cancel failed: " + err.message, true); }
+  });
+  if ($("tmiActions")) {
+    $("tmiActions").addEventListener("input", (e) => {
+      if (["tmiTp", "tmiSl", "tmiTl", "tmiCtrlQty"].includes(e.target.id)) _tmiUpdateRR();
+    });
+    $("tmiActions").addEventListener("click", async (e) => {
+      if (!_tmiState) return;
+      const presetBtn = e.target.closest("[data-tmi-preset]");
+      if (presetBtn) {
+        const [kindP, pctS] = presetBtn.dataset.tmiPreset.split(":");
+        const pct = Number(pctS) / 100;
+        const { pos, ord, quote } = _tmiResolveCtx();
+        const ref = Number(pos?.ltp || pos?.avg_price || ord?.ltp || ord?.price || quote?.ltp || 0);
+        if (!ref) return;
+        const isLong = pos ? (pos.net_qty >= 0) : ((ord?.side || "") === "BUY");
+        if (kindP === "sl" && $("tmiSl")) $("tmiSl").value = (ref * (isLong ? (1 - pct) : (1 + pct))).toFixed(2);
+        if (kindP === "tp" && $("tmiTp")) $("tmiTp").value = (ref * (isLong ? (1 + pct) : (1 - pct))).toFixed(2);
+        _tmiUpdateRR();
+        return;
+      }
+      if (e.target.id === "tmiPlaceTpSlBtn") {
+        const { pos } = _tmiResolveCtx();
+        if (!pos || !pos.is_open) return _tmiMsg("No running position found to attach TP/SL.", true);
+        const tp = Number($("tmiTp")?.value || 0), sl = Number($("tmiSl")?.value || 0), tl = Number($("tmiTl")?.value || 0);
+        const qty = Number($("tmiCtrlQty")?.value || Math.abs(pos.net_qty || 0));
+        if (tp <= 0 && sl <= 0) return _tmiMsg("Enter a Target (TP) and/or Stop Loss (SL) price first.", true);
+        if (!confirm(`Place exit protection on ${pos.symbol} (Qty ${qty}):${tp > 0 ? " Target ₹" + tp : ""}${sl > 0 ? " SL ₹" + sl : ""}${tl > 0 ? " TL ₹" + tl : ""}?`)) return;
+        try {
+          const r = await fetch("/api/trademode/sl-target", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: pos.id, symbol: pos.symbol, security_id: pos.security_id,
+              exchange_segment: pos.exchange_segment, product: pos.product, side: pos.side,
+              qty, target_price: tp, sl_price: sl, trailing_jump: tl,
+            }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.detail || "Failed to place TP/SL");
+          const msg = `✅ Placed ${(d.result?.placed || []).map((x) => x.leg).join(" + ")} order(s)` + (d.result?.note ? ` — ${d.result.note}` : "");
+          _tmiMsg(msg);
+          loadTradeMode({ silent: true });
+        } catch (err) { _tmiMsg("TP/SL failed: " + err.message, true); }
+        return;
+      }
+      if (e.target.id === "tmiReverseBtn") {
+        const { pos } = _tmiResolveCtx();
+        if (!pos || !pos.is_open) return _tmiMsg("No open position to reverse.", true);
+        const qty = Number($("tmiCtrlQty")?.value || Math.abs(pos.net_qty || 0));
+        if (!confirm(`REVERSE ${pos.symbol}? Squares off ${Math.abs(pos.net_qty)} and opens opposite side ${qty} via MARKET order.`)) return;
+        try {
+          const r = await fetch("/api/trademode/reverse-position", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: pos.id, symbol: pos.symbol, security_id: pos.security_id, qty }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.detail || "Reverse failed");
+          _tmiMsg(`✅ Reversed ${pos.symbol} → ${d.result?.side || ""} ${d.result?.qty || ""} placed.`);
+          loadTradeMode({ silent: true });
+        } catch (err) { _tmiMsg("Reverse failed: " + err.message, true); }
+        return;
+      }
+      if (e.target.id === "tmiExitBtn") {
+        const { pos } = _tmiResolveCtx();
+        if (!pos || !pos.is_open) return _tmiMsg("Position is already closed.", true);
+        if (!confirm(`Exit open position ${pos.symbol} (${Math.abs(pos.net_qty)} qty MARKET)?`)) return;
+        try {
+          const r = await fetch("/api/trademode/exit-position", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: pos.id, symbol: pos.symbol, security_id: pos.security_id }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.detail || "Exit failed");
+          _tmiMsg(`✅ Exit order placed for ${pos.symbol}.`);
+          loadTradeMode({ silent: true });
+        } catch (err) { _tmiMsg("Exit failed: " + err.message, true); }
+        return;
+      }
+      if (e.target.id === "tmiModSaveBtn") {
+        const { ord } = _tmiResolveCtx();
+        if (!ord) return;
+        const order_type = $("tmiModType")?.value || "LIMIT";
+        const qty = Number($("tmiModQty")?.value || ord.qty || 1);
+        const price = Number($("tmiModPrice")?.value || 0);
+        const stop_price = Number($("tmiModStop")?.value || 0);
+        try {
+          const r = await fetch("/api/trademode/modify-order", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: ord.id, order_type, qty, price, stop_price, validity: ord.validity || "DAY" }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.detail || "Modify failed");
+          _tmiMsg(`✅ Modified order #${ord.id}.`);
+          loadTradeMode({ silent: true });
+        } catch (err) { _tmiMsg("Modify failed: " + err.message, true); }
+        return;
+      }
+      if (e.target.id === "tmiCancelOrdBtn") {
+        const { ord } = _tmiResolveCtx();
+        if (!ord) return;
+        if (!confirm(`Cancel pending order ${ord.symbol} (#${ord.id})?`)) return;
+        try {
+          const r = await fetch("/api/trademode/cancel-order", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: ord.id }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.detail || "Cancel failed");
+          _tmiMsg(`✅ Cancelled order #${ord.id}.`);
+          loadTradeMode({ silent: true });
+        } catch (err) { _tmiMsg("Cancel failed: " + err.message, true); }
+        return;
+      }
+      if (e.target.id === "tmiPlaceNewBtn") {
+        const { ord } = _tmiResolveCtx();
+        const side = $("tmiNewSide")?.value || "BUY";
+        const order_type = $("tmiNewType")?.value || "MARKET";
+        const qty = Number($("tmiNewQty")?.value || 1);
+        const price = Number($("tmiNewPrice")?.value || 0);
+        const target_price = Number($("tmiNewTp")?.value || 0);
+        const sl_price = Number($("tmiNewSl")?.value || 0);
+        const trailing_jump = Number($("tmiNewTl")?.value || 0);
+        if (!confirm(`Place ${side} ${qty} ${_tmiState.symbol} (${order_type}${price && order_type === "LIMIT" ? " @ ₹" + price : ""})?`)) return;
+        try {
+          const r = await fetch("/api/trademode/place-order", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              symbol: _tmiState.symbol,
+              security_id: ord?.security_id || _tmiState.item?.security_id || "",
+              exchange_segment: ord?.exchange_segment || _tmiState.item?.exchange_segment || "",
+              side, qty, product: ord?.product || "INTRADAY", order_type, price,
+              target_price, sl_price, trailing_jump,
+            }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.detail || "Order placement failed");
+          _tmiMsg(`✅ Order placed for ${_tmiState.symbol}.`);
+          loadTradeMode({ silent: true });
+        } catch (err) { _tmiMsg("Place order failed: " + err.message, true); }
+      }
+    });
   }
 
   // Redraw dashboard charts when theme changes so grid/tick/series colors stay synced.

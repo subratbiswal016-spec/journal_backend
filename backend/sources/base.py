@@ -100,5 +100,14 @@ class DataSource:
     def get_funds(self) -> Optional[dict]:
         return None
 
+    supports_trade_mode = False
+
+    def get_trade_snapshot(self) -> dict:
+        return {"supported": False, "source": self.name,
+                "note": "Trade Mode is currently enabled for Fyers and Dhan."}
+
+    def get_trade_reports(self) -> dict:
+        return {"supported": False, "source": self.name, "charges": [], "realised": [], "ledger": []}
+
     def logout(self) -> None:
         pass
