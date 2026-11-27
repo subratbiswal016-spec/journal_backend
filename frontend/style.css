@@ -995,6 +995,183 @@ main {
   }
 }
 
+.tmode-kpi-exit {
+  flex-shrink: 0;
+  white-space: nowrap;
+  padding: 5px 9px !important;
+  font-size: 11px !important;
+}
+
+.tmode-kpi-exit.idle {
+  opacity: .78;
+}
+
+.tmode-kpi-act {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 6px;
+  align-self: stretch;
+  flex-shrink: 0;
+}
+
+.tmode-kpi-float {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 7px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.tmode-kpi-float:hover,
+.tmode-kpi-float.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.tm-float {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 2500;
+  width: 280px;
+  background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-radius: 13px;
+  box-shadow: 0 18px 46px rgba(0, 0, 0, .35);
+  overflow: hidden;
+}
+
+.tm-float-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--line);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+
+.tm-float-head:active {
+  cursor: grabbing;
+}
+
+.tm-float-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tm-float-btns {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tm-float-btn {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted);
+  border-radius: 6px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+}
+
+.tm-float-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.tm-float-body {
+  padding: 11px 12px;
+}
+
+.tm-float.minimized .tm-float-body {
+  display: none;
+}
+
+.tm-float-pnl {
+  font-size: 24px;
+  font-weight: 800;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.tm-float-pnl.pos {
+  color: var(--put);
+}
+
+.tm-float-pnl.neg {
+  color: var(--call);
+}
+
+.tm-float-sub {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tm-float-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.tm-float-cell {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.tm-float-cell .k {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+.tm-float-cell .v {
+  font-size: 12.5px;
+  font-weight: 700;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tm-float-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.tm-float-foot .jbtn {
+  flex: 1;
+  justify-content: center;
+}
+
 @media (max-width: 640px) {
   .tmode-kpis {
     grid-template-columns: repeat(2, minmax(0, 1fr));

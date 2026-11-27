@@ -3566,16 +3566,30 @@
     if ($("tmodeEmpty")) $("tmodeEmpty").classList.add("hidden");
     if ($("tmodeContent")) $("tmodeContent").classList.remove("hidden");
     const p = d.pnl || {}, f = d.funds || {}, c = d.counts || {}, ctrl = d.controls || {};
-    if ($("tmodeExitAll")) $("tmodeExitAll").classList.toggle("hidden", !(ctrl.can_exit_all && (c.open_positions > 0 || c.pending_orders > 0)));
-    const kcard = (l, v, cls, sub) =>
-      `<div class="kpi"><div class="kpi-main"><div class="kpi-l">${l}</div><div class="kpi-v ${cls || ""}">${v}</div><div class="kpi-s">${sub}</div></div></div>`;
+    const hasOpen = (c.open_positions > 0 || c.pending_orders > 0);
+    if ($("tmodeExitAll")) {
+      $("tmodeExitAll").classList.toggle("hidden", !ctrl.can_exit_all);
+      $("tmodeExitAll").classList.toggle("idle", !hasOpen);
+    }
+    const floatOpen = $("tmFloatWidget") && !$("tmFloatWidget").classList.contains("hidden");
+    const floatActBtn = `<button id="tmodeKpiFloatBtn" class="tmode-kpi-float${floatOpen ? " active" : ""}" type="button" title="Pop out movable floating P&amp;L box">⧉ Float</button>`;
+    const exitCardBtn = ctrl.can_exit_all
+      ? `<button id="tmodeKpiExitAll" class="jbtn danger sm tmode-kpi-exit${hasOpen ? "" : " idle"}" type="button" onclick="document.getElementById('tmodeExitAll')?.click()" title="Close all open positions">⚡ Exit All</button>`
+      : "";
+    const kpiExtra = `<div class="tmode-kpi-act">${floatActBtn}${exitCardBtn}</div>`;
+    const kcard = (l, v, cls, sub, extra = "") =>
+      `<div class="kpi"><div class="kpi-main"><div class="kpi-l">${l}</div><div class="kpi-v ${cls || ""}">${v}</div><div class="kpi-s">${sub}</div></div>${extra}</div>`;
     $("tmodeKpis").innerHTML =
-      kcard("Today Total P&L", signed(p.total || 0), (p.total || 0) >= 0 ? "pos" : "neg", `realized ${signed(p.realized || 0)}`) +
+      kcard("Today Total P&L", signed(p.total || 0), (p.total || 0) >= 0 ? "pos" : "neg", `realized ${signed(p.realized || 0)}`, kpiExtra) +
       kcard("Realized P&L", signed(p.realized || 0), (p.realized || 0) >= 0 ? "pos" : "neg", "booked today") +
       kcard("Unrealized MTM", signed(p.unrealized || 0), (p.unrealized || 0) >= 0 ? "pos" : "neg", `${c.open_positions || 0} open positions`) +
       kcard("Available Funds", inr(f.available || 0), "pos", `utilized ${inr(f.utilized || 0)}`) +
       kcard("Total Balance", inr(f.total || 0), "", `opening ${inr(f.sod || 0)}`) +
       kcard("Today Activity", `${c.trades || 0} fills`, "", `${c.orders || 0} orders (${c.pending_orders || 0} pending)`);
+    if ($("tmodeKpiFloatBtn")) $("tmodeKpiFloatBtn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      toggleTmFloatWidget();
+    });
     if ($("tmSidePos")) $("tmSidePos").textContent = c.total_positions || 0;
     if ($("tmSideOrd")) $("tmSideOrd").textContent = c.orders || 0;
     if ($("tmSideTrd")) $("tmSideTrd").textContent = c.trades || 0;
@@ -3583,6 +3597,7 @@
     document.querySelectorAll("#navTrade [data-tmtab]").forEach((x) => x.classList.toggle("active", x.dataset.tmtab === tmTab));
     renderTradeBody();
     if (_tmiState && $("tmInspectModal") && !$("tmInspectModal").classList.contains("hidden")) _tmiSyncLive();
+    if ($("tmFloatWidget") && !$("tmFloatWidget").classList.contains("hidden")) _renderTmFloatWidget();
   }
   function _tmPositionsTable(rows, ctrl, maxH) {
     return rows.length
@@ -3727,7 +3742,9 @@
   }
   setInterval(() => {
     const v = $("viewTradeMode");
-    if (!v || v.classList.contains("hidden")) return;
+    const tmVisible = v && !v.classList.contains("hidden");
+    const fwVisible = $("tmFloatWidget") && !$("tmFloatWidget").classList.contains("hidden");
+    if (!tmVisible && !fwVisible) return;
     if ($("tmodeAuto") && !$("tmodeAuto").checked) { _tmSetTimer("⏸ off", "paused"); tmCountdown = TM_REFRESH_SEC; return; }
     if (typeof marketStatus === "function" && !marketStatus().open) { _tmSetTimer("⏸ paused", "paused"); tmCountdown = TM_REFRESH_SEC; return; }
     if (document.hidden) { _tmSetTimer("⏸ paused", "paused"); return; }
@@ -4361,6 +4378,124 @@
     });
   }
 
+  // ------------------------------------------------ Movable Floating P&L Box
+  function _clampFloatPos(left, top, box) {
+    const w = box ? box.offsetWidth || 280 : 280;
+    const h = box ? box.offsetHeight || 180 : 180;
+    return {
+      left: Math.max(8, Math.min(window.innerWidth - w - 8, left)),
+      top: Math.max(8, Math.min(window.innerHeight - h - 8, top)),
+    };
+  }
+  function _applyStoredFloatPos() {
+    const box = $("tmFloatWidget");
+    if (!box) return;
+    try {
+      const raw = JSON.parse(localStorage.getItem("tm-float-pos") || "null");
+      if (raw && Number.isFinite(raw.left) && Number.isFinite(raw.top)) {
+        const c = _clampFloatPos(raw.left, raw.top, box);
+        box.style.left = c.left + "px";
+        box.style.top = c.top + "px";
+        box.style.right = "auto";
+        box.style.bottom = "auto";
+      }
+    } catch (e) { /* keep default bottom-right anchor */ }
+  }
+  function _renderTmFloatWidget() {
+    const body = $("tmFloatBody"), brk = $("tmFloatBroker");
+    if (!body) return;
+    const d = tmData;
+    if (!d) {
+      if (brk) brk.textContent = "—";
+      body.innerHTML = `<div class="tm-float-sub">Syncing live P&amp;L…</div>`;
+      return;
+    }
+    if (!d.supported) {
+      if (brk) brk.textContent = (d.source || "—").toUpperCase();
+      body.innerHTML = `<div class="tm-float-sub">Live P&amp;L float supports <b>Fyers</b> &amp; <b>Dhan</b>.</div>`;
+      return;
+    }
+    const p = d.pnl || {}, f = d.funds || {}, c = d.counts || {}, ctrl = d.controls || {};
+    if (brk) brk.textContent = (d.source || "").toUpperCase();
+    const tot = Number(p.total || 0), rls = Number(p.realized || 0), unrl = Number(p.unrealized || 0);
+    body.innerHTML =
+      `<div class="tm-float-pnl ${tot >= 0 ? "pos" : "neg"}">${signed(tot)}</div>` +
+      `<div class="tm-float-sub">Realized ${signed(rls)} · MTM ${signed(unrl)}</div>` +
+      `<div class="tm-float-meta">` +
+      `<div class="tm-float-cell"><div class="k">Open Pos</div><div class="v">${c.open_positions || 0} / ${c.total_positions || 0}</div></div>` +
+      `<div class="tm-float-cell"><div class="k">Avail Funds</div><div class="v pos">${inr(f.available || 0)}</div></div>` +
+      `<div class="tm-float-cell"><div class="k">Orders</div><div class="v">${c.orders || 0} (${c.pending_orders || 0} pend)</div></div>` +
+      `<div class="tm-float-cell"><div class="k">Fills</div><div class="v">${c.trades || 0}</div></div>` +
+      `</div>` +
+      `<div class="tm-float-foot">` +
+      `<button id="tmFloatOpenTm" class="jbtn sm" type="button">⚡ Trade Mode</button>` +
+      (ctrl.can_exit_all ? `<button id="tmFloatExitAll" class="jbtn danger sm" type="button" onclick="document.getElementById('tmodeExitAll')?.click()">⚡ Exit All</button>` : "") +
+      `</div>`;
+    if ($("tmFloatOpenTm")) $("tmFloatOpenTm").addEventListener("click", () => switchView("trademode"));
+  }
+  function openTmFloatWidget() {
+    const box = $("tmFloatWidget");
+    if (!box) return;
+    box.classList.remove("hidden", "minimized");
+    try { localStorage.setItem("tm-float-open", "1"); } catch (e) { }
+    _renderTmFloatWidget();
+    _applyStoredFloatPos();
+    if ($("tmodeKpiFloatBtn")) $("tmodeKpiFloatBtn").classList.add("active");
+    if (!tmData) loadTradeMode({ silent: true });
+  }
+  function closeTmFloatWidget() {
+    const box = $("tmFloatWidget");
+    if (!box) return;
+    box.classList.add("hidden");
+    try { localStorage.removeItem("tm-float-open"); } catch (e) { }
+    if ($("tmodeKpiFloatBtn")) $("tmodeKpiFloatBtn").classList.remove("active");
+  }
+  function toggleTmFloatWidget() {
+    const box = $("tmFloatWidget");
+    if (!box) return;
+    if (box.classList.contains("hidden")) openTmFloatWidget();
+    else closeTmFloatWidget();
+  }
+  (function initTmFloatDrag() {
+    const box = $("tmFloatWidget"), head = $("tmFloatHead");
+    if (!box || !head) return;
+    let drag = null;
+    head.addEventListener("pointerdown", (e) => {
+      if (e.target.closest("button")) return;
+      const rect = box.getBoundingClientRect();
+      drag = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
+      box.style.left = rect.left + "px";
+      box.style.top = rect.top + "px";
+      box.style.right = "auto";
+      box.style.bottom = "auto";
+      try { head.setPointerCapture(e.pointerId); } catch (err) { }
+      e.preventDefault();
+    });
+    head.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      const c = _clampFloatPos(e.clientX - drag.dx, e.clientY - drag.dy, box);
+      box.style.left = c.left + "px";
+      box.style.top = c.top + "px";
+    });
+    const endDrag = () => {
+      if (!drag) return;
+      drag = null;
+      const rect = box.getBoundingClientRect();
+      try { localStorage.setItem("tm-float-pos", JSON.stringify({ left: Math.round(rect.left), top: Math.round(rect.top) })); } catch (e) { }
+    };
+    head.addEventListener("pointerup", endDrag);
+    head.addEventListener("pointercancel", endDrag);
+    window.addEventListener("resize", () => {
+      if (box.classList.contains("hidden") || !box.style.left) return;
+      const c = _clampFloatPos(parseFloat(box.style.left), parseFloat(box.style.top), box);
+      box.style.left = c.left + "px";
+      box.style.top = c.top + "px";
+    });
+    if ($("tmFloatClose")) $("tmFloatClose").addEventListener("click", closeTmFloatWidget);
+    if ($("tmFloatMin")) $("tmFloatMin").addEventListener("click", () => box.classList.toggle("minimized"));
+    if ($("tmFloatSync")) $("tmFloatSync").addEventListener("click", () => loadTradeMode({ silent: true }));
+  })();
+
   // Redraw dashboard charts when theme changes so grid/tick/series colors stay synced.
   window.addEventListener("oi-theme-change", () => {
     if (homeData && $("viewHome") && !$("viewHome").classList.contains("hidden")) renderHome(homeData);
@@ -4368,6 +4503,9 @@
 
   // Land on the analytics Dashboard once auth status allows (runs last, after all declarations exist).
   (window.__authReady || Promise.resolve(true)).then((ok) => {
-    if (ok) switchView("home");
+    if (ok) {
+      switchView("home");
+      try { if (localStorage.getItem("tm-float-open") === "1") openTmFloatWidget(); } catch (e) { }
+    }
   });
 })();
