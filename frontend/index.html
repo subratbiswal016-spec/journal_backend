@@ -11,7 +11,7 @@
   <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"
     defer></script>
   <script src="app.js?v=18" defer></script>
-  <script src="journal.js?v=78" defer></script>
+  <script src="journal.js?v=79" defer></script>
 </head>
 
 <body>
@@ -32,10 +32,14 @@
     </nav>
     <nav class="tabs hidden" id="navTrade">
       <button class="tab active" data-tmtab="overview" type="button">📊 Today P&amp;L &amp; Funds</button>
-      <button class="tab" data-tmtab="positions" type="button">⚡ Positions <span id="tmSidePos" class="tab-badge">0</span></button>
-      <button class="tab" data-tmtab="orders" type="button">📋 Orders <span id="tmSideOrd" class="tab-badge">0</span></button>
-      <button class="tab" data-tmtab="trades" type="button">✅ Today's Trades <span id="tmSideTrd" class="tab-badge">0</span></button>
-      <button class="tab" data-tmtab="holdings" type="button">💼 Holdings <span id="tmSideHld" class="tab-badge">0</span></button>
+      <button class="tab" data-tmtab="positions" type="button">⚡ Positions <span id="tmSidePos"
+          class="tab-badge">0</span></button>
+      <button class="tab" data-tmtab="orders" type="button">📋 Orders <span id="tmSideOrd"
+          class="tab-badge">0</span></button>
+      <button class="tab" data-tmtab="trades" type="button">✅ Today's Trades <span id="tmSideTrd"
+          class="tab-badge">0</span></button>
+      <button class="tab" data-tmtab="holdings" type="button">💼 Holdings <span id="tmSideHld"
+          class="tab-badge">0</span></button>
       <button class="tab" data-tmtab="risk" type="button">🛡 Risk &amp; Kill Switch</button>
       <button class="tab" data-tmtab="reports" type="button">📑 Reports &amp; Ledger</button>
       <button class="tab tmode-exit-tab" id="tmodeSideExit" type="button">← Exit Trade Mode</button>
@@ -85,11 +89,12 @@
           <span class="tb-sep">·</span>
           <span id="tbTimerSess">—</span>
         </div>
-        <button id="tradeModeBtn" class="tmode-btn" type="button" title="Live Trade Mode (Today P&amp;L, Funds, Positions, Orders, Trades)">
-        <span class="tmode-dot"></span>
-        <span id="tradeModeLbl">Trade Mode</span>
-      </button>
-      <div class="profile-wrap hidden" id="profileWrap">
+        <button id="tradeModeBtn" class="tmode-btn" type="button"
+          title="Live Trade Mode (Today P&amp;L, Funds, Positions, Orders, Trades)">
+          <span class="tmode-dot"></span>
+          <span id="tradeModeLbl">Trade Mode</span>
+        </button>
+        <div class="profile-wrap hidden" id="profileWrap">
           <button id="profileBtn" class="prof-btn" type="button" title="Account profile">
             <span class="prof-avatar" id="profileAvatar" aria-hidden="true"></span>
             <span class="prof-name" id="profileName">Account</span>
@@ -101,12 +106,14 @@
               <div class="prof-meta" style="flex:1">
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
                   <div class="prof-fullname" id="profileFullName">—</div>
-                  <button id="profEditToggle" class="prof-edit-btn" type="button" title="Set display name or photo">✏️</button>
+                  <button id="profEditToggle" class="prof-edit-btn" type="button"
+                    title="Set display name or photo">✏️</button>
                 </div>
                 <div class="prof-sub" id="profileSub">—</div>
                 <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:4px">
                   <span id="profileStatusBadge" class="prof-badge ok" style="margin-top:0">Connected</span>
-                  <button id="profSetNameBtn" class="prof-hint-btn hidden" type="button" title="Dhan API only returns Client ID, not personal name">✏️ Add your name</button>
+                  <button id="profSetNameBtn" class="prof-hint-btn hidden" type="button"
+                    title="Dhan API only returns Client ID, not personal name">✏️ Add your name</button>
                 </div>
               </div>
             </div>
@@ -114,8 +121,11 @@
             <div id="profileCustomForm" class="prof-cform hidden">
               <input id="profCustomName" type="text" placeholder="Enter your display name" maxlength="50" />
               <div style="display:flex;gap:6px;align-items:center">
-                <input id="profCustomAvatar" type="text" placeholder="Photo URL or upload →" maxlength="45000" style="flex:1" />
-                <label class="jbtn sm" style="cursor:pointer;white-space:nowrap" title="Upload photo from device">📷<input id="profCustomFile" type="file" accept="image/*" class="hidden" /></label>
+                <input id="profCustomAvatar" type="text" placeholder="Photo URL or upload →" maxlength="45000"
+                  style="flex:1" />
+                <label class="jbtn sm" style="cursor:pointer;white-space:nowrap"
+                  title="Upload photo from device">📷<input id="profCustomFile" type="file" accept="image/*"
+                    class="hidden" /></label>
               </div>
               <button id="profCustomSave" class="jbtn primary sm" type="button">Save Profile</button>
             </div>
@@ -634,7 +644,8 @@
 
     <aside id="tmFloatWidget" class="tm-float hidden" aria-label="Floating Live P&amp;L Monitor">
       <div id="tmFloatHead" class="tm-float-head" title="Drag to move anywhere">
-        <span class="tm-float-title"><span class="tmode-dot"></span><span>Live P&amp;L</span><span id="tmFloatBroker" class="badge">—</span></span>
+        <span class="tm-float-title"><span class="tmode-dot"></span><span>Live P&amp;L</span><span id="tmFloatBroker"
+            class="badge">—</span></span>
         <div class="tm-float-btns">
           <button id="tmFloatSync" class="tm-float-btn" type="button" title="Refresh now">⟳</button>
           <button id="tmFloatMin" class="tm-float-btn" type="button" title="Minimize / expand">—</button>
@@ -863,6 +874,11 @@
             <h2 style="margin:0">⚡ Trade Mode</h2>
             <span id="tmodeBrokerBadge" class="badge">—</span>
             <span id="tmodeDate" class="modal-sub" style="margin:0"></span>
+            <div id="tmodeSegFilter" class="tm-seg" role="group" aria-label="Segment filter">
+              <button type="button" class="active" data-tmseg="all">All</button>
+              <button type="button" data-tmseg="equity">Equity</button>
+              <button type="button" data-tmseg="fno">F&amp;O</button>
+            </div>
           </div>
           <div class="jactions">
             <label id="tmodeAutoWrap" class="tm-auto-pill" title="Click to toggle 10s auto-refresh · Refreshed count">
@@ -871,7 +887,8 @@
               <span id="tmodeCountdown" class="tm-auto-timer">⏱ 10s · #0</span>
             </label>
             <button id="tmodeRefresh" class="jbtn primary" type="button">⟳ Refresh</button>
-            <button id="tmodeExitAll" class="jbtn danger hidden" type="button" title="Close all open intraday positions">⚡ Exit All</button>
+            <button id="tmodeExitAll" class="jbtn danger hidden" type="button"
+              title="Close all open intraday positions">⚡ Exit All</button>
             <button id="tmodeCloseBtn" class="jbtn" type="button">← Back</button>
           </div>
         </div>
