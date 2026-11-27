@@ -35,6 +35,7 @@ import requests
 
 from .. import config
 from .base import AuthRequired, DataSource, FuturesRow, OptionChain, StrikeRow
+from . import yahoo_feed as _yf
 
 API = "https://api.upstox.com/v2"
 DIALOG_URL = API + "/login/authorization/dialog"
@@ -342,6 +343,11 @@ class UpstoxDataSource(DataSource):
             raise
         except Exception:
             return []  # futures are best-effort; never break the option chain
+
+    fetch_one_quote = staticmethod(_yf.fetch_one_quote)
+    fetch_batch_quotes = staticmethod(_yf.fetch_batch_quotes)
+    fetch_index_quotes = staticmethod(_yf.fetch_index_quotes)
+    fetch_history = staticmethod(_yf.fetch_history)
 
     def _load_futures_index(self) -> dict:
         today = _ist_today_str()

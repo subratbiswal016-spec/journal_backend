@@ -238,15 +238,29 @@ def _screener_list(html_text: str, cls: str) -> list[str]:
     return [x for x in items if x][:8]
 
 
-def _fetch_screener(sym: str) -> dict:
-    """Scrape the key ratios + pros/cons + about from Screener.in. Works from
-    datacenter IPs (unlike Yahoo), with exactly the Indian fundamentals users
-    expect. Returns a display-ready {ratios:[{name,value}], pros, cons, about}."""
-    url = f"https://www.screener.in/company/{sym}/"
-    r = requests.get(url, headers={"User-Agent": _UA, "Accept": "text/html,*/*",
-                                   "Accept-Language": "en-US,en;q=0.9"}, timeout=12)
-    r.raise_for_status()
-    t = r.text or ""
+def _fetch_screener(sym: str, bse_code: str = "") -> dict:
+    """Scrape the key ratios + pros/cons + about from Screener.in. Tries ticker
+    first, then BSE scrip code for BSE-only stocks."""
+    candidates = [sym]
+    if bse_code and bse_code != sym:
+        candidates.append(bse_code)
+    t = ""
+    url = ""
+    last_err: Exception | None = None
+    for code in candidates:
+        url = f"https://www.screener.in/company/{code}/"
+        try:
+            r = requests.get(url, headers={"User-Agent": _UA, "Accept": "text/html,*/*",
+                                           "Accept-Language": "en-US,en;q=0.9"}, timeout=12)
+            r.raise_for_status()
+            t = r.text or ""
+            if 'id="top-ratios"' in t:
+                break
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            t = ""
+    if not t:
+        raise last_err or RuntimeError("screener: empty")
 
     nm = re.search(r'<h1[^>]*>(.*?)</h1>', t, re.S)
     name = _clean(nm.group(1)) if nm else sym
@@ -281,12 +295,24 @@ def _fetch_screener(sym: str) -> dict:
     }
 
 
-def _yahoo_ratios(sym: str) -> dict:
+def _yahoo_ratios(sym: str, exch: str = "NSE") -> dict:
     """Yahoo fallback, mapped into the same display shape as Screener."""
-    ysym = _OVERRIDES.get(sym, sym + _SUFFIX)
-    y = _map(_fetch_raw(ysym), sym)
-    if not y.get("ok"):
-        raise RuntimeError("yahoo: no data")
+    suffixes = (".BO", ".NS") if exch == "BSE" else (".NS", ".BO")
+    y = None
+    ysym = _OVERRIDES.get(sym, sym + suffixes[0])
+    last_err: Exception | None = None
+    candidates = [_OVERRIDES[sym]] if sym in _OVERRIDES else [sym + sfx for sfx in suffixes]
+    for cand in candidates:
+        try:
+            y = _map(_fetch_raw(cand), sym)
+            ysym = cand
+            if y and y.get("ok"):
+                break
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            y = None
+    if not y or not y.get("ok"):
+        raise last_err or RuntimeError("yahoo: no data")
 
     def _cr(v):
         return f"₹ {v/1e7:,.0f} Cr." if isinstance(v, (int, float)) else None
@@ -315,11 +341,15 @@ def _yahoo_ratios(sym: str) -> dict:
 
 
 def get(ticker: str) -> dict:
-    """Return a fundamentals dict for an NSE ticker. Never raises."""
-    sym = (ticker or "").strip().upper()
-    if not sym:
+    """Return a fundamentals dict for an NSE or BSE ticker. Never raises."""
+    from . import symbols as _syms
+    raw = (ticker or "").strip().upper()
+    if not raw:
         return {"ok": False, "note": "No symbol."}
-    ysym = _OVERRIDES.get(sym, sym + _SUFFIX)
+    resolved = _syms.resolve(raw)
+    sym = (resolved.get("t") if resolved else None) or raw.split(":")[-1].rsplit("-", 1)[0]
+    bse_code = str(resolved.get("c") or "") if resolved else ""
+    exch = "BSE" if (resolved and resolved.get("e") == "BSE") or raw.startswith("BSE:") else "NSE"
     today = _ist_date()
     now = time.time()
 
@@ -332,14 +362,14 @@ def get(ticker: str) -> dict:
     global _LAST_REASON
     data = None
     reasons = []
-    for fetch in (_fetch_screener, _yahoo_ratios):   # Screener primary, Yahoo fallback
+    for fn, args in ((_fetch_screener, (sym, bse_code)), (_yahoo_ratios, (sym, exch))):
         try:
-            d = fetch(sym)
+            d = fn(*args)
             if d and d.get("ok"):
                 data = d
                 break
         except Exception as e:  # noqa: BLE001 - try the next source
-            reasons.append(f"{fetch.__name__}: {type(e).__name__} {str(e)[:60]}")
+            reasons.append(f"{fn.__name__}: {type(e).__name__} {str(e)[:60]}")
     if data is None:
         _LAST_REASON = " | ".join(reasons)
         data = {"ok": False, "symbol": sym, "reason": _LAST_REASON,

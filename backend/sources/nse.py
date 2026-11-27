@@ -16,6 +16,7 @@ from typing import Optional
 import requests
 
 from .base import DataSource, OptionChain, StrikeRow, FuturesRow
+from . import yahoo_feed as _yf
 
 BASE = "https://www.nseindia.com"
 OC_URL = BASE + "/api/option-chain-indices?symbol={symbol}"
@@ -120,6 +121,11 @@ class NSEDataSource(DataSource):
         )
         chain.futures = self._fetch_futures(symbol)
         return chain
+
+    fetch_one_quote = staticmethod(_yf.fetch_one_quote)
+    fetch_batch_quotes = staticmethod(_yf.fetch_batch_quotes)
+    fetch_index_quotes = staticmethod(_yf.fetch_index_quotes)
+    fetch_history = staticmethod(_yf.fetch_history)
 
     def _fetch_futures(self, symbol: str) -> list[FuturesRow]:
         try:

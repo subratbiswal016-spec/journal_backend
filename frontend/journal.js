@@ -1353,6 +1353,7 @@
       rows = scrAllRows.map((m) => { m.matched = []; return m; });
     }
     scrRows = rows;
+    syncQuickSignalCounts();
     drawScreenerRows();
     // status line
     const mktOpen = typeof marketStatus !== "function" || marketStatus().open;
@@ -1396,9 +1397,10 @@
     tb.innerHTML = rows.map((r, i) => {
       const cc = r.chg_pct >= 0 ? "pos" : "neg";
       const gc = r.gap_pct >= 0 ? "pos" : "neg";
-      return `<tr class="scr-row" data-sym="${esc(r.symbol)}" title="${esc(r.why || "")}">
+      const disp = r.display || r.symbol;
+      return `<tr class="scr-row" data-sym="${esc(r.symbol)}" data-disp="${esc(disp)}" title="${esc(r.why || "")}">
         <td>${i + 1}</td>
-        <td style="text-align:left"><b>${esc(r.symbol)}</b></td>
+        <td style="text-align:left"><b>${esc(disp)}</b></td>
         <td>${fmt(r.ltp, 2)}</td>
         <td class="${cc}">${r.chg_pct >= 0 ? "+" : ""}${r.chg_pct}%</td>
         <td class="${gc}">${r.gap_pct >= 0 ? "+" : ""}${r.gap_pct}%</td>
@@ -1432,6 +1434,7 @@
       scrMeta = await (await fetch("/api/screener/meta")).json();
     } catch (e) { return; }
     scrIndex = scrMeta.default_index || scrIndex;
+    SCR_LABELS = { bullish: "Bullish", bearish: "Bearish" };
     // label + history-flag maps for client-side filtering
     (scrMeta.groups || []).forEach((g) => g.filters.forEach((f) => {
       SCR_LABELS[f.id] = f.label;
@@ -1461,6 +1464,10 @@
                 <span>${esc(f.label)}${f.hist ? ' <small class="scr-hist">•daily</small>' : ""}</span></label>`).join("")}
           </div>
         </div>`).join("") +
+        `<div class="scr-quick">` +
+        `<button id="scrQuickBull" class="scr-qbtn bull" type="button" title="Show all Bullish stocks (click again for all)">▲ Bullish <b id="scrBullCnt">0</b></button>` +
+        `<button id="scrQuickBear" class="scr-qbtn bear" type="button" title="Show all Bearish stocks (click again for all)">▼ Bearish <b id="scrBearCnt">0</b></button>` +
+        `</div>` +
         `<button id="scrClear" class="scr-clear" type="button" hidden>✕ Clear</button>`;
       bar.addEventListener("click", onFilterBarClick);
       bar.addEventListener("change", onFilterChange);
@@ -1473,7 +1480,38 @@
     document.querySelectorAll(".scr-chip-menu").forEach((m) => (m.hidden = true));
     document.querySelectorAll(".scr-chip").forEach((c) => c.classList.remove("open"));
   }
+  function toggleSignalQuick(sigId) {
+    const other = sigId === "bullish" ? "bearish" : "bullish";
+    const wasOnly = scrFilters.has(sigId) && !scrFilters.has(other);
+    scrFilters.delete("bullish");
+    scrFilters.delete("bearish");
+    if (!wasOnly) scrFilters.add(sigId);
+    document.querySelectorAll('#scrFilterBar input[type=checkbox][value="bullish"], #scrFilterBar input[type=checkbox][value="bearish"]').forEach((c) => {
+      c.checked = scrFilters.has(c.value);
+    });
+    syncChipCounts();
+    applyFilters();
+  }
+  function syncQuickSignalCounts() {
+    const other = [...scrFilters].filter((f) => f !== "bullish" && f !== "bearish" && SCR_PRED[f]);
+    const pool = other.length ? scrAllRows.filter((m) => other.some((f) => { try { return SCR_PRED[f](m); } catch (e) { return false; } })) : scrAllRows;
+    let bull = 0, bear = 0;
+    for (const m of pool) {
+      if (SCR_PRED.bullish(m)) bull++;
+      else if (SCR_PRED.bearish(m)) bear++;
+    }
+    if ($("scrBullCnt")) $("scrBullCnt").textContent = bull;
+    if ($("scrBearCnt")) $("scrBearCnt").textContent = bear;
+    if ($("scrQuickBull")) $("scrQuickBull").classList.toggle("active", scrFilters.has("bullish"));
+    if ($("scrQuickBear")) $("scrQuickBear").classList.toggle("active", scrFilters.has("bearish"));
+  }
   function onFilterBarClick(e) {
+    const qbtn = e.target.closest("#scrQuickBull, #scrQuickBear");
+    if (qbtn) {
+      closeAllChipMenus();
+      toggleSignalQuick(qbtn.id === "scrQuickBull" ? "bullish" : "bearish");
+      return;
+    }
     const btn = e.target.closest(".scr-chip-btn");
     if (btn) {
       const chip = btn.closest(".scr-chip");
@@ -1484,7 +1522,7 @@
       chip.classList.toggle("open", !wasOpen);
       return;
     }
-    if (e.target.id === "scrClear") {
+    if (e.target.closest("#scrClear")) {
       scrFilters.clear();
       document.querySelectorAll("#scrFilterBar input[type=checkbox]").forEach((c) => (c.checked = false));
       syncChipCounts();
@@ -1562,7 +1600,9 @@
   // ---- per-stock analysis (trend + momentum) on row click ----
   if ($("screenerTable")) $("screenerTable").addEventListener("click", (e) => {
     const row = e.target.closest(".scr-row");
-    if (row) analyzeStock(row.dataset.sym);
+    if (!row) return;
+    const sym = row.dataset.sym, disp = row.dataset.disp || sym;
+    analyzeStock(sym, { t: disp, f: sym, e: sym.startsWith("BSE:") ? "BSE" : "NSE" });
   });
   function closeAnalyze() {
     $("analyzeModal").classList.add("hidden");
@@ -1577,50 +1617,101 @@
     if (e.key === "Escape" && !$("analyzeModal").classList.contains("hidden")) closeAnalyze();
   });
 
-  // ---- header stock search → opens the analysis popup ----
-  let SYMBOLS = [];
+  // ---- header stock search → opens the analysis popup (ALL NSE + BSE) ----
+  let SYMBOLS = [], SYMBOL_ITEMS = [];
   let searchMatches = [], searchActive = -1;
+  const _SYM_ALIASES = { MOFSL: "MOTILALOFS", MOSFL: "MOTILALOFS", TATAMOTOR: "TATAMOTORS", HDFC: "HDFCBANK", ZOMATO: "ETERNAL", ETERNAL: "ZOMATO" };
+  function _isFuzzyClose(a, b) {
+    const la = a.length, lb = b.length;
+    if (Math.abs(la - lb) > 1 || Math.min(la, lb) < 3) return false;
+    if (a === b) return true;
+    if (la === lb) {
+      const diff = [];
+      for (let i = 0; i < la; i++) if (a[i] !== b[i]) diff.push(i);
+      if (diff.length === 1) return true;
+      return diff.length === 2 && diff[1] === diff[0] + 1 && a[diff[0]] === b[diff[1]] && a[diff[1]] === b[diff[0]];
+    }
+    const s = la < lb ? a : b, l = la < lb ? b : a;
+    let i = 0, j = 0, skip = false;
+    while (i < s.length && j < l.length) {
+      if (s[i] === l[j]) { i++; j++; }
+      else if (skip) return false;
+      else { skip = true; j++; }
+    }
+    return true;
+  }
   (async function initStockSearch() {
     const inp = $("stockSearch"), box = $("stockSearchResults");
     if (!inp || !box) return;
-    try { SYMBOLS = (await (await fetch("/api/symbols")).json()).stocks || []; } catch (e) { return; }
     const hide = () => { box.classList.add("hidden"); searchActive = -1; };
     function render() {
       if (!searchMatches.length) { hide(); return; }
-      box.innerHTML = searchMatches.map((s, i) =>
-        `<div class="hs-item${i === searchActive ? " active" : ""}" data-sym="${esc(s)}">${esc(s)}</div>`).join("");
+      box.innerHTML = searchMatches.map((it, i) => {
+        const sym = it.t || it, nm = it.n && it.n !== sym ? it.n : "", ex = it.e || "NSE";
+        return `<div class="hs-item${i === searchActive ? " active" : ""}" data-idx="${i}">` +
+          `<span class="hs-left"><span class="hs-sym">${esc(sym)}</span>${nm ? `<span class="hs-name">${esc(nm)}</span>` : ""}</span>` +
+          `<span class="hs-exch">${esc(ex)}</span></div>`;
+      }).join("");
       box.classList.remove("hidden");
     }
-    function search(q) {
-      q = q.trim().toUpperCase();
+    function search(qRaw) {
+      const q = qRaw.trim().toUpperCase();
       if (!q) { searchMatches = []; hide(); return; }
-      const starts = [], has = [];
-      for (const s of SYMBOLS) {
-        if (s.startsWith(q)) starts.push(s);
-        else if (s.includes(q)) has.push(s);
+      const alias = _SYM_ALIASES[q];
+      const toks = q.split(/\s+/).filter(Boolean);
+      const exact = [], starts = [], hasT = [], hasN = [], fuzzy = [];
+      for (const it of SYMBOL_ITEMS) {
+        const t = it.t, n = (it.n || "").toUpperCase(), c = String(it.c || "");
+        if ((alias && t === alias) || t === q || c === q) exact.push(it);
+        else if (t.startsWith(q) || c.startsWith(q)) starts.push(it);
+        else if (t.includes(q)) hasT.push(it);
+        else if (n.includes(q) || (toks.length > 1 && toks.every((w) => t.includes(w) || n.includes(w)))) hasN.push(it);
+        else if (q.length >= 3 && (_isFuzzyClose(q, t) || (t.length > q.length && _isFuzzyClose(q, t.slice(0, q.length))))) fuzzy.push(it);
       }
-      searchMatches = starts.concat(has).slice(0, 8);
+      searchMatches = exact.concat(starts, hasT, hasN, fuzzy).slice(0, 12);
       searchActive = searchMatches.length ? 0 : -1;
       render();
     }
-    function pick(sym) {
-      if (!sym) return;
+    async function pick(itemOrStr) {
+      let item = typeof itemOrStr === "object" ? itemOrStr : null;
+      const raw = typeof itemOrStr === "string" ? itemOrStr.trim().toUpperCase() : "";
+      if (!item && raw) {
+        const resolved = SYMBOL_ITEMS.find((x) => x.t === raw) || SYMBOL_ITEMS.find((x) => x.t === (_SYM_ALIASES[raw] || ""));
+        item = resolved || { t: raw, n: "", e: "NSE", f: raw };
+      }
+      if (!item || !item.t) return;
       inp.value = ""; searchMatches = []; hide(); inp.blur();
-      analyzeStock(sym);
+      analyzeStock(item.f || item.t, item);
     }
     inp.addEventListener("input", () => search(inp.value));
     inp.addEventListener("focus", () => { if (inp.value.trim()) search(inp.value); });
-    inp.addEventListener("keydown", (e) => {
+    inp.addEventListener("keydown", async (e) => {
       if (e.key === "ArrowDown") { e.preventDefault(); if (searchMatches.length) { searchActive = (searchActive + 1) % searchMatches.length; render(); } }
       else if (e.key === "ArrowUp") { e.preventDefault(); if (searchMatches.length) { searchActive = (searchActive - 1 + searchMatches.length) % searchMatches.length; render(); } }
-      else if (e.key === "Enter") { e.preventDefault(); pick(searchMatches[searchActive] || searchMatches[0]); }
+      else if (e.key === "Enter") {
+        e.preventDefault();
+        if (searchMatches.length) return pick(searchMatches[searchActive] || searchMatches[0]);
+        const q = inp.value.trim();
+        if (!q) return;
+        try {
+          const r = await (await fetch("/api/symbols?q=" + encodeURIComponent(q))).json();
+          if (r.items && r.items.length) return pick(r.items[0]);
+        } catch (err) {}
+        pick(q);
+      }
       else if (e.key === "Escape") { hide(); }
     });
     box.addEventListener("mousedown", (e) => {
       const it = e.target.closest(".hs-item");
-      if (it) { e.preventDefault(); pick(it.dataset.sym); }
+      if (it) { e.preventDefault(); pick(searchMatches[Number(it.dataset.idx)]); }
     });
     document.addEventListener("click", (e) => { if (!e.target.closest(".hsearch")) hide(); });
+    try {
+      const d = await (await fetch("/api/symbols")).json();
+      SYMBOLS = d.stocks || [];
+      SYMBOL_ITEMS = d.items || SYMBOLS.map((s) => ({ t: s, n: s, e: "NSE", f: `NSE:${s}-EQ`, b: "", c: "" }));
+      if (inp.value.trim()) search(inp.value);
+    } catch (e) { /* keep backend Enter lookup fallback */ }
   })();
 
   // ---- formatting helpers for the stock detail view ----
@@ -1647,18 +1738,19 @@
 
   let anaState = null;            // {sym, tech, fund, fundLoading, tab}
 
-  async function analyzeStock(symIn) {
-    const sym = (symIn || "").toUpperCase();
+  async function analyzeStock(symIn, meta) {
+    const raw = (symIn || "").toUpperCase();
+    const sym = (meta && meta.t) || (raw.includes(":") ? raw.split(":")[1].replace(/-(EQ|BE|SM|ST|BZ|A|B|T|X|XT|Z|M|MT|P)$/, "") : raw);
+    const reqSym = (meta && meta.f) || raw;
     anaState = { sym, tech: null, fund: null, fundLoading: true, tab: "tech" };
-    $("anaTitle").textContent = sym;
+    $("anaTitle").textContent = meta && meta.e ? `${sym} · ${meta.e}` : sym;
     $("analyzeModal").classList.remove("hidden");
     $("anaBody").innerHTML = `<p class="modal-sub">Loading ${esc(sym)}…</p>`;
 
-    // Fundamentals (Yahoo) and technicals (Fyers) are independent — fetch both
-    // in parallel. Fundamentals work even when not logged in to Fyers.
-    const techP = fetch("/api/screener/analyze?symbol=" + encodeURIComponent(sym))
+    // Fundamentals (Screener/Yahoo) and technicals (Fyers/Yahoo) are independent — fetch both in parallel.
+    const techP = fetch("/api/screener/analyze?symbol=" + encodeURIComponent(reqSym))
       .then(async (r) => ({ r, d: await r.json().catch(() => ({})) }));
-    fetch("/api/stock/fundamentals?symbol=" + encodeURIComponent(sym))
+    fetch("/api/stock/fundamentals?symbol=" + encodeURIComponent(reqSym))
       .then((r) => (r.ok ? r.json() : { ok: false }))
       .catch(() => ({ ok: false }))
       .then((f) => { if (anaState && anaState.sym === sym) { anaState.fund = f; anaState.fundLoading = false; renderAnalysisShell(); } });

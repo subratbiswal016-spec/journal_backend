@@ -389,12 +389,63 @@ class FyersDataSource(DataSource):
                 "low": g("l", "low_price"), "prev_close": prev,
                 "volume": g("v", "volume", "vol")}
 
+    def _resolve_fyers_eq(self, ticker: str) -> str:
+        t = (ticker or "").strip().upper()
+        if ":" in t:
+            return t
+        from .. import symbols as _syms
+        it = _syms.resolve(t)
+        return (it.get("f") if it else None) or f"NSE:{t}-EQ"
+
     def fetch_one_quote(self, ticker: str) -> dict | None:
-        """One live quote for an NSE equity (used by the background scanner)."""
-        q = self._depth_quote(f"NSE:{ticker}-EQ")
+        """One live quote for an NSE/BSE equity (used by the background scanner)."""
+        fsym = self._resolve_fyers_eq(ticker)
+        q = self._depth_quote(fsym)
         if q:
             q["ticker"] = ticker
         return q
+
+    def fetch_batch_quotes(self, tickers: list[str]) -> dict[str, dict]:
+        """Batch live quotes for up to 50 NSE/BSE symbols in a single Fyers call."""
+        fy = self._model()
+        pairs = [(t, self._resolve_fyers_eq(t)) for t in tickers[:50]]
+        if not pairs:
+            return {}
+        sym_to_key = {fs: t for t, fs in pairs}
+        _rate_limit(background=True)
+        resp = fy.quotes(data={"symbols": ",".join(fs for _, fs in pairs)})
+        if not isinstance(resp, dict):
+            return {}
+        if resp.get("s") == "error":
+            msg = str(resp.get("message", ""))
+            if resp.get("code") in (-8, -15, -16, -17) or "token" in msg.lower():
+                raise AuthRequired(f"Fyers token rejected: {msg}")
+            from . import yahoo_feed as _yf
+            return _yf.fetch_batch_quotes(tickers)
+        out: dict[str, dict] = {}
+        for item in resp.get("d") or []:
+            if not isinstance(item, dict) or item.get("s") == "error":
+                continue
+            fs = (item.get("n") or "").upper()
+            v = item.get("v") or {}
+            key = sym_to_key.get(fs)
+            if not key:
+                continue
+            ltp = v.get("lp") or v.get("ltp")
+            if ltp in (None, 0):
+                continue
+            ch = v.get("ch")
+            prev = v.get("prev_close_price") or ((ltp - ch) if ch is not None else None)
+            out[key] = {
+                "ticker": key,
+                "ltp": ltp,
+                "open": v.get("open_price"),
+                "high": v.get("high_price"),
+                "low": v.get("low_price"),
+                "prev_close": prev,
+                "volume": v.get("volume") or 0,
+            }
+        return out
 
     def fetch_index_quotes(self, names: list[str]) -> list[dict]:
         """Live spot + % change for index underlyings (NIFTY, BANKNIFTY, SENSEX…).
@@ -435,16 +486,21 @@ class FyersDataSource(DataSource):
 
     def fetch_history(self, ticker: str, resolution: str = "D", days: int = 120,
                       background: bool = False) -> list[list]:
-        """Candles [ts,o,h,l,c,v] for an NSE equity. resolution 'D' (daily) or a
-        minute string like '5' (5-min). `days` is the lookback window.
-        `background=True` yields to user-facing calls (used by the screener's
-        level warm-up); the stock-analysis popup leaves it False for priority."""
+        """Candles [ts,o,h,l,c,v] for an NSE/BSE equity. Supports raw Fyers symbols
+        (e.g. 'BSE:360ONE-A') or clean tickers resolved via `symbols.resolve`."""
         fy = self._model()
         end = _ist_now().date()
         start = end - timedelta(days=days)
+        raw_t = (ticker or "").strip().upper()
+        if ":" in raw_t:
+            fsym = raw_t
+        else:
+            from .. import symbols as _syms
+            it = _syms.resolve(raw_t)
+            fsym = (it.get("f") if it else None) or f"NSE:{raw_t}-EQ"
         _rate_limit(background=background)
         resp = self._check(fy.history(data={
-            "symbol": f"NSE:{ticker}-EQ", "resolution": resolution, "date_format": "1",
+            "symbol": fsym, "resolution": resolution, "date_format": "1",
             "range_from": start.isoformat(), "range_to": end.isoformat(),
             "cont_flag": "1",
         }))

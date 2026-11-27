@@ -8,6 +8,7 @@ from ..journal import dhan as jdhan
 from .base import AuthRequired, DataSource, OptionChain
 from .mock import MockDataSource
 from .nse import NSEDataSource
+from . import yahoo_feed as _yf
 
 
 class DhanDataSource(DataSource):
@@ -65,3 +66,8 @@ class DhanDataSource(DataSource):
             return self._nse.get_option_chain(symbol, expiry)
         except Exception:  # noqa: BLE001 - fallback if NSE blocks datacenter IP
             return self._mock.get_option_chain(symbol, expiry)
+
+    fetch_one_quote = staticmethod(_yf.fetch_one_quote)
+    fetch_batch_quotes = staticmethod(_yf.fetch_batch_quotes)
+    fetch_index_quotes = staticmethod(_yf.fetch_index_quotes)
+    fetch_history = staticmethod(_yf.fetch_history)

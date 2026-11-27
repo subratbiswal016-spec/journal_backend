@@ -120,20 +120,43 @@ INDEXES = {
 DEFAULT_INDEX = "nifty50"
 
 
+def _exchange_symbols(exch: str) -> list[str]:
+    from . import symbols as _syms
+    items = _syms.load_master(allow_network=True)
+    if exch == "NSE":
+        return [it["f"] for it in items if "NSE" in it.get("e", "") and it.get("f")]
+    return [it["b"] for it in items if "BSE" in it.get("e", "") and it.get("b")]
+
+
 def index_list() -> list[dict]:
     """[{id,label,count}] for the index/universe picker."""
-    return [{"id": k, "label": v["label"], "count": len(v["symbols"])}
-            for k, v in INDEXES.items()]
+    out = [{"id": k, "label": v["label"], "count": len(v["symbols"])}
+           for k, v in INDEXES.items()]
+    out.append({"id": "nse", "label": "All NSE Stocks", "count": len(_exchange_symbols("NSE"))})
+    out.append({"id": "bse", "label": "All BSE Stocks", "count": len(_exchange_symbols("BSE"))})
+    return out
 
 
 def scan_universe(index: str = DEFAULT_INDEX) -> list[str]:
-    """Symbols to scan for the chosen index, capped to the rate-limit budget."""
+    """Symbols to scan for the chosen index or full NSE/BSE universe."""
+    if index == "nse":
+        return _exchange_symbols("NSE")
+    if index == "bse":
+        return _exchange_symbols("BSE")
     syms = INDEXES.get(index, INDEXES[DEFAULT_INDEX])["symbols"]
     return syms[:SCAN_LIMIT]
 
 
 def fyers_symbol(ticker: str) -> str:
-    return f"NSE:{ticker}-EQ"
+    t = (ticker or "").strip().upper()
+    return t if ":" in t else f"NSE:{t}-EQ"
+
+
+def _display_symbol(sym: str) -> str:
+    s = (sym or "").strip().upper()
+    if ":" in s:
+        s = s.split(":", 1)[1]
+    return s.rsplit("-", 1)[0] if "-" in s else s
 
 
 def _quote_signal(chg_pct: float, pos: float, above_open: bool) -> tuple[str, str]:
@@ -164,8 +187,10 @@ def _metrics(q: dict) -> dict | None:
     # distance from today's extremes (for rise/fall-from & near-high/low filters)
     from_high_pct = round((hi - ltp) / hi * 100, 2) if hi > 0 else None
     from_low_pct = round((ltp - lo) / lo * 100, 2) if lo > 0 else None
+    sym = q.get("ticker") or ""
     return {
-        "symbol": q.get("ticker") or "",
+        "symbol": sym,
+        "display": q.get("display") or _display_symbol(sym),
         "ltp": round(ltp, 2),
         "day_high": round(hi, 2), "day_low": round(lo, 2),
         "open": round(op, 2), "prev_close": round(prev, 2),
@@ -207,12 +232,8 @@ NEAR_PCT = 0.3        # "near the day high/low" tolerance (%)
 NEAR_52W_PCT = 2.5    # "near the 52-week high/low" tolerance (%)
 GAP_PCT = 0.5         # gap up/down threshold (%)
 
-# UI groups → the chips shown above the table.
+# UI groups → the chips shown above the table (Bullish/Bearish live as quick pills).
 FILTER_GROUPS = [
-    {"id": "signal", "label": "Signal", "icon": "📈", "filters": [
-        {"id": "bullish", "label": "Bullish"},
-        {"id": "bearish", "label": "Bearish"},
-    ]},
     {"id": "high", "label": "Near High", "icon": "🔺", "filters": [
         {"id": "near_day_high", "label": "Near Day High"},
         {"id": "new_week_high", "label": "New Weekly High", "hist": True},
@@ -278,7 +299,8 @@ _PREDICATES = {
     "r2":             lambda m: _ge(m.get("r2"), 0) and m["ltp"] > m["r2"],
     "r3":             lambda m: _ge(m.get("r3"), 0) and m["ltp"] > m["r3"],
 }
-_LABELS = {f["id"]: f["label"] for g in FILTER_GROUPS for f in g["filters"]}
+_LABELS = {"bullish": "Bullish", "bearish": "Bearish",
+           **{f["id"]: f["label"] for g in FILTER_GROUPS for f in g["filters"]}}
 HIST_FILTERS = {f["id"] for g in FILTER_GROUPS for f in g["filters"] if f.get("hist")}
 
 
@@ -718,7 +740,10 @@ def demo_screen(index: str = DEFAULT_INDEX, filters: list[str] | None = None,
     without a Fyers login — routed through the real screen() for parity."""
     import random
     quotes, hist = [], {}
-    for t in scan_universe(index):
+    uni = scan_universe(index)
+    use_hist = len(uni) <= 400
+    for t in uni:
+        disp = _display_symbol(t)
         rng = random.Random(sum(ord(c) for c in t))
         prev = round(rng.uniform(100, 4000), 2)
         chg = rng.uniform(-6, 6)
@@ -726,19 +751,20 @@ def demo_screen(index: str = DEFAULT_INDEX, filters: list[str] | None = None,
         op = round(prev * (1 + rng.uniform(-2.5, 2.5) / 100), 2)
         hi = round(max(ltp, op) * (1 + rng.uniform(0, 3) / 100), 2)
         lo = round(min(ltp, op) * (1 - rng.uniform(0, 3) / 100), 2)
-        quotes.append({"ticker": t, "ltp": ltp, "open": op, "high": hi, "low": lo,
+        quotes.append({"ticker": t, "display": disp, "ltp": ltp, "open": op, "high": hi, "low": lo,
                        "prev_close": prev, "volume": rng.randint(100_000, 25_000_000)})
-        hist[t] = {
-            "high_52w": round(hi * (1 + rng.uniform(0, 0.25)), 2),
-            "low_52w": round(lo * (1 - rng.uniform(0, 0.25)), 2),
-            "week_high": round(hi * (1 + rng.uniform(-0.02, 0.03)), 2),
-            "week_low": round(lo * (1 + rng.uniform(-0.03, 0.02)), 2),
-            "month_high": round(hi * (1 + rng.uniform(0, 0.06)), 2),
-            "month_low": round(lo * (1 - rng.uniform(0, 0.06)), 2),
-            "pivot": round((hi + lo + prev) / 3, 2),
-            "r1": round(prev * (1 + rng.uniform(-0.5, 1.5) / 100), 2),
-            "r2": round(prev * (1 + rng.uniform(1, 3) / 100), 2),
-            "r3": round(prev * (1 + rng.uniform(2.5, 4.5) / 100), 2),
-            "avg_vol20": rng.randint(100_000, 20_000_000),
-        }
+        if use_hist:
+            hist[t] = {
+                "high_52w": round(hi * (1 + rng.uniform(0, 0.25)), 2),
+                "low_52w": round(lo * (1 - rng.uniform(0, 0.25)), 2),
+                "week_high": round(hi * (1 + rng.uniform(-0.02, 0.03)), 2),
+                "week_low": round(lo * (1 + rng.uniform(-0.03, 0.02)), 2),
+                "month_high": round(hi * (1 + rng.uniform(0, 0.06)), 2),
+                "month_low": round(lo * (1 - rng.uniform(0, 0.06)), 2),
+                "pivot": round((hi + lo + prev) / 3, 2),
+                "r1": round(prev * (1 + rng.uniform(-0.5, 1.5) / 100), 2),
+                "r2": round(prev * (1 + rng.uniform(1, 3) / 100), 2),
+                "r3": round(prev * (1 + rng.uniform(2.5, 4.5) / 100), 2),
+                "avg_vol20": rng.randint(100_000, 20_000_000),
+            }
     return screen(quotes, hist, filters, sort, limit)

@@ -23,7 +23,8 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                RedirectResponse, Response)
 from fastapi.staticfiles import StaticFiles
 
-from . import analytics, config, screener, fundamentals, ipo
+from . import analytics, config, screener, fundamentals, ipo, symbols
+symbols.warm_async()
 from .sources import get_source
 from .sources.base import AuthRequired
 from .journal import store as jstore, rules as jrules, analytics as janalytics
@@ -189,6 +190,7 @@ def _switch_source(name: str, logout_prev: bool = True):
         _scanner.updated.clear()
         _scanner.auth_required = False
         _scanner.last_error = None
+    _ticker_idx_cache.update(ts=0.0, data=[])
     return _source
 
 
@@ -342,13 +344,22 @@ class _ScreenerScanner:
         return used < _SCAN_DAILY_BUDGET
 
     def should_scan(self) -> bool:
-        return (_source.name == "fyers"
-                and _market_open()
-                and (time.time() - self.last_pull) < _SCAN_ACTIVE_WINDOW
-                and self._budget_ok())
+        if _source.name == "mock":
+            return False
+        if (time.time() - self.last_pull) >= _SCAN_ACTIVE_WINDOW:
+            return False
+        if _source.name == "fyers" and not self._budget_ok():
+            return False
+        # During live hours scan continuously; off-hours allow one initial pass
+        # so the Screener still shows real latest exchange quotes instead of empty.
+        if _market_open():
+            return True
+        with self.lock:
+            return any(t not in self.quotes for t in self.universe)
 
     def set_index(self, index: str):
-        if index not in screener.INDEXES:
+        valid = set(screener.INDEXES) | {"nse", "bse"}
+        if index not in valid:
             return
         with self.lock:
             if index != self.index:
@@ -384,33 +395,62 @@ class _ScreenerScanner:
                 with self.lock:
                     uni = list(self.universe)
                     idx = self.index
-                fetched_any = False
+                stale_syms = []
+                now_ts = time.time()
                 for t in uni:
-                    if not self.running or not self.should_scan():
-                        break
                     with self.lock:
-                        if self.index != idx:   # universe changed mid-cycle → restart
+                        if self.index != idx:
                             break
                         last = self.updated.get(t, 0.0)
-                    # Skip stocks still fresh enough — avoids wasting calls
-                    # re-fetching a quote we already have. Big cut in API usage.
-                    if time.time() - last < _SCAN_STALE_TARGET:
-                        continue
-                    try:
-                        fetched_any = True
-                        q = _source.fetch_one_quote(t)   # rate-limited + counted inside
-                        self.auth_required = False
-                        if q:
-                            with self.lock:
-                                self.quotes[t] = q
-                                self.updated[t] = time.time()
-                            self.last_error = None
-                    except AuthRequired:
-                        self.auth_required = True
-                        time.sleep(3.0)
-                        break
-                    except Exception as e:  # noqa: BLE001 - skip symbol, keep scanning
-                        self.last_error = str(e)
+                    if now_ts - last >= _SCAN_STALE_TARGET:
+                        stale_syms.append(t)
+                batch_fn = getattr(_source, "fetch_batch_quotes", None)
+                fetched_any = bool(stale_syms)
+                if callable(batch_fn) and stale_syms:
+                    for i in range(0, len(stale_syms), 50):
+                        if not self.running or not self.should_scan():
+                            break
+                        with self.lock:
+                            if self.index != idx:
+                                break
+                        chunk = stale_syms[i:i + 50]
+                        try:
+                            res_map = batch_fn(chunk)
+                            self.auth_required = False
+                            if res_map:
+                                now_q = time.time()
+                                with self.lock:
+                                    for sym_k, q in res_map.items():
+                                        self.quotes[sym_k] = q
+                                        self.updated[sym_k] = now_q
+                                self.last_error = None
+                        except AuthRequired:
+                            self.auth_required = True
+                            time.sleep(3.0)
+                            break
+                        except Exception as e:  # noqa: BLE001
+                            self.last_error = str(e)
+                else:
+                    for t in stale_syms:
+                        if not self.running or not self.should_scan():
+                            break
+                        with self.lock:
+                            if self.index != idx:   # universe changed mid-cycle → restart
+                                break
+                        try:
+                            q = _source.fetch_one_quote(t)   # rate-limited + counted inside
+                            self.auth_required = False
+                            if q:
+                                with self.lock:
+                                    self.quotes[t] = q
+                                    self.updated[t] = time.time()
+                                self.last_error = None
+                        except AuthRequired:
+                            self.auth_required = True
+                            time.sleep(3.0)
+                            break
+                        except Exception as e:  # noqa: BLE001 - skip symbol, keep scanning
+                            self.last_error = str(e)
                 # If every stock was still fresh, idle longer so we're not busy-
                 # spinning over timestamps; otherwise the limiter paces the fetches.
                 time.sleep(3.0 if not fetched_any else 0.5)
@@ -464,9 +504,13 @@ def _hist_levels_for(symbols: list[str], today: str) -> tuple[dict, int]:
 
 
 @app.get("/api/symbols")
-def api_symbols():
-    """Full F&O stock list for the header search box."""
-    return {"stocks": screener.FO_STOCKS}
+def api_symbols(q: Optional[str] = Query(None)):
+    """All NSE & BSE equity stocks for the header search box (supports ?q= search)."""
+    if q and q.strip():
+        items = symbols.search(q, limit=25)
+        return {"stocks": [x["t"] for x in items], "items": items, "total": len(items)}
+    items = symbols.load_master(allow_network=True)
+    return {"stocks": [x["t"] for x in items], "items": items, "total": len(items)}
 
 
 @app.get("/api/screener/meta")
@@ -479,11 +523,11 @@ def api_screener_meta():
 @app.get("/api/screener")
 def api_screener(sort: str = Query("volume"), index: str = Query(screener.DEFAULT_INDEX),
                  hist: int = Query(0)):
-    """Serve the latest background snapshot for the chosen index (no Fyers call
-    per request). Filtering is client-side; `hist=1` (set only while a history
-    filter is active) warms/includes the 52W/pivot/avg-volume levels."""
-    if _source.name != "fyers":
-        rows = screener.demo_screen(index, [], sort)
+    """Serve the latest background snapshot for the chosen index (all non-mock
+    sources scan real exchange quotes: Fyers quotes or free Yahoo Finance feed)."""
+    row_cap = 6000 if index in ("nse", "bse") else 250
+    if _source.name == "mock":
+        rows = screener.demo_screen(index, [], sort, limit=row_cap)
         return {"available": True, "sort": sort, "index": index,
                 "scanned": len(screener.scan_universe(index)), "covered": len(rows),
                 "rows": rows, "warming": 0, "stale_secs": 0, "live": False}
@@ -495,17 +539,34 @@ def api_screener(sort: str = Query("volume"), index: str = Query(screener.DEFAUL
         raise HTTPException(status_code=401, detail="login_required")
 
     quotes, total, oldest = _scanner.snapshot()
+    # On initial cold pull, if scanner hasn't fetched the first batch yet, wait
+    # briefly (up to ~1.5s) on small universes or kick off cleanly.
+    if not quotes and index not in ("nse", "bse") and hasattr(_source, "fetch_batch_quotes"):
+        try:
+            uni = screener.scan_universe(index)
+            first = _source.fetch_batch_quotes(uni[:50])
+            if first:
+                now_q = time.time()
+                with _scanner.lock:
+                    for k, q in first.items():
+                        _scanner.quotes[k] = q
+                        _scanner.updated[k] = now_q
+                quotes, total, oldest = _scanner.snapshot()
+        except AuthRequired:
+            raise HTTPException(status_code=401, detail="login_required")
+        except Exception:  # noqa: BLE001
+            pass
     hist_map, warming = ({}, 0)
-    if hist:
+    if hist and index not in ("nse", "bse"):
         hist_map, warming = _hist_levels_for(screener.scan_universe(index), _today_ist())
-    rows = screener.screen(quotes, hist_map, [], sort)
+    rows = screener.screen(quotes, hist_map, [], sort, limit=row_cap)
     stale = int(time.time() - oldest) if oldest else 0
     return {"available": True, "sort": sort, "index": index,
             "scanned": total, "covered": len(quotes), "rows": rows,
             "warming": warming, "stale_secs": stale,
             "market_open": _market_open(),
             "budget_left": max(0, _SCAN_DAILY_BUDGET - (
-                _source.calls_today() if hasattr(_source, "calls_today") else 0)),
+                _source.calls_today() if hasattr(_source, "calls_today") else 0)) if _source.name == "fyers" else 9999,
             "scan_error": _scanner.last_error if not quotes else None, "live": True}
 
 
@@ -516,12 +577,14 @@ _TICKER_IDX_TTL = 20.0   # seconds; index spot is cheap but still cached
 
 
 def _ticker_indices():
-    """Index spot + % change, cached ~20s and only fetched during market hours."""
+    """Index spot + % change, cached ~20s (seed once even after market close)."""
     now = time.time()
     if now - _ticker_idx_cache["ts"] < _TICKER_IDX_TTL and _ticker_idx_cache["data"]:
         return _ticker_idx_cache["data"]
-    if not _market_open() or (_source.calls_today() if hasattr(_source, "calls_today") else 0) >= _SCAN_DAILY_BUDGET:
-        return _ticker_idx_cache["data"]   # closed / out of budget → last values
+    if _ticker_idx_cache["data"] and not _market_open():
+        return _ticker_idx_cache["data"]
+    if _source.name == "fyers" and (_source.calls_today() if hasattr(_source, "calls_today") else 0) >= _SCAN_DAILY_BUDGET:
+        return _ticker_idx_cache["data"]
     try:
         data = _source.fetch_index_quotes(_TICKER_INDEXES)
         if data:
@@ -534,9 +597,8 @@ def _ticker_indices():
 @app.get("/api/ticker")
 def api_ticker():
     """Scrolling ticker data: indices + top high-volume stocks. Reuses the
-    screener scanner's snapshot for stocks (no extra calls); indices are cached.
-    Everything is gated by market hours + daily budget."""
-    if _source.name != "fyers":
+    screener scanner's snapshot for stocks across all live brokers."""
+    if _source.name == "mock":
         import random
         rng = random.Random(int(time.time() // 20))
         idx = [{"name": n, "ltp": round(rng.uniform(20000, 55000), 2),
@@ -551,6 +613,18 @@ def api_ticker():
     _scanner.ensure_started()
     _scanner.touch()                         # viewing the ticker keeps data warm
     quotes, _total, _oldest = _scanner.snapshot()
+    if not quotes and hasattr(_source, "fetch_batch_quotes") and _source.name != "fyers":
+        try:
+            first = _source.fetch_batch_quotes(screener.scan_universe("nifty50")[:24])
+            if first:
+                now_q = time.time()
+                with _scanner.lock:
+                    for k, q in first.items():
+                        _scanner.quotes[k] = q
+                        _scanner.updated[k] = now_q
+                quotes, _total, _oldest = _scanner.snapshot()
+        except Exception:  # noqa: BLE001
+            pass
     rows = []
     for q in quotes:
         prev = float(q.get("prev_close") or 0)
@@ -565,39 +639,85 @@ def api_ticker():
             "live": True, "market_open": _market_open()}
 
 
+def _yahoo_stock_ohlc(ticker: str, interval: str = "1d", range_str: str = "1y", exch: str = "NSE") -> list[list]:
+    """Best-effort [ts, o, h, l, c, v] candles from Yahoo Finance for any NSE/BSE equity."""
+    import requests as _req
+    suffixes = (".BO", ".NS") if exch == "BSE" else (".NS", ".BO")
+    for sfx in suffixes:
+        try:
+            r = _req.get(
+                f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(ticker + sfx)}",
+                params={"interval": interval, "range": range_str},
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=7,
+            )
+            if r.status_code != 200:
+                continue
+            res = (((r.json() or {}).get("chart") or {}).get("result") or [None])[0]
+            if not res:
+                continue
+            ts = res.get("timestamp") or []
+            q = ((res.get("indicators") or {}).get("quote") or [{}])[0]
+            os_, hs, ls, cs, vs = (q.get(k) or [] for k in ("open", "high", "low", "close", "volume"))
+            out = []
+            for t0, o0, h0, l0, c0, v0 in zip(ts, os_, hs, ls, cs, vs):
+                if None in (o0, h0, l0, c0):
+                    continue
+                out.append([int(t0), round(float(o0), 2), round(float(h0), 2),
+                            round(float(l0), 2), round(float(c0), 2), int(v0 or 0)])
+            if len(out) >= 5:
+                return out
+        except Exception:  # noqa: BLE001
+            continue
+    return []
+
+
 @app.get("/api/screener/analyze")
 def api_screener_analyze(symbol: str = Query(...)):
-    """Trend/momentum analysis for one stock (data, not advice)."""
-    sym = (symbol or "").strip().upper()
-    if not sym:
+    """Trend/momentum analysis for any NSE/BSE stock (Fyers or Yahoo OHLC)."""
+    raw = (symbol or "").strip().upper()
+    if not raw:
         raise HTTPException(status_code=400, detail="symbol required")
+    resolved = symbols.resolve(raw)
+    sym = (resolved.get("t") if resolved else None) or raw.split(":")[-1].rsplit("-", 1)[0]
+    fsym = raw if ":" in raw else ((resolved.get("f") if resolved else None) or sym)
+    exch = "BSE" if (resolved and resolved.get("e") == "BSE") or raw.startswith("BSE:") else "NSE"
+    if _source.name == "mock":
+        return screener.demo_analysis(sym)
+
+    daily: list[list] = []
+    intraday: list[list] = []
     if _source.name == "fyers":
         try:
-            # Fyers caps a single daily history request at ~366 days — 365 gives
-            # ~250 sessions (enough for 52-week range, 200-DMA and 1-yr return).
-            daily = _source.fetch_history(sym, resolution="D", days=365)
+            daily = _source.fetch_history(fsym, resolution="D", days=365)
             try:
-                intraday = _source.fetch_history(sym, resolution="5", days=3)
-            except Exception:  # noqa: BLE001 - intraday optional; daily still useful
+                intraday = _source.fetch_history(fsym, resolution="5", days=3)
+            except Exception:  # noqa: BLE001
                 intraday = []
-            return screener.analyze(sym, daily, intraday)
         except AuthRequired:
-            raise HTTPException(status_code=401, detail="login_required")
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(status_code=502, detail=f"Analyze failed: {e}")
-    return screener.demo_analysis(sym)
+            pass  # still fall back cleanly to Yahoo real OHLC below
+        except Exception:  # noqa: BLE001
+            daily = []
+    if len(daily) < 5:
+        daily = _yahoo_stock_ohlc(sym, "1d", "1y", exch)
+    if not intraday:
+        intraday = _yahoo_stock_ohlc(sym, "5m", "5d", exch)
+    if len(daily) >= 5 or intraday:
+        return screener.analyze(sym, daily, intraday)
+    return screener.demo_analysis(sym) if _source.name == "mock" else {
+        "symbol": sym, "ok": False, "note": f"No technical history found for {sym}."
+    }
 
 
 @app.get("/api/stock/fundamentals")
 def api_stock_fundamentals(symbol: str = Query(...)):
-    """Company fundamentals (valuation, financials, analyst view) from Yahoo
-    Finance — independent of the Fyers budget. Best-effort: degrades gracefully."""
+    """Company fundamentals (Screener.in + Yahoo Finance) for all non-mock sources."""
     sym = (symbol or "").strip().upper()
     if not sym:
         raise HTTPException(status_code=400, detail="symbol required")
-    if _source.name == "fyers":
-        return fundamentals.get(sym)
-    return fundamentals.demo(sym)
+    if _source.name == "mock":
+        return fundamentals.demo(sym)
+    return fundamentals.get(sym)
 
 
 @app.get("/api/stock/fundamentals_diag")
