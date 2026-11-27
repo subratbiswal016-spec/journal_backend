@@ -3372,14 +3372,18 @@
     if (!row) return "equity";
     const sym = String(row.symbol || "").toUpperCase().trim();
     const ex = String(row.exchange_segment || row.exchange || "").toUpperCase().trim();
+    const fnoSym = /\b(CE|PE|CALL|PUT|FUT)\b/.test(sym) ||
+      /\d+(?:\.\d+)?-?(?:CE|PE|FUT)$/.test(sym) ||
+      /(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\d*FUT$/.test(sym) ||
+      /-FUT$/.test(sym) ||
+      /(?:^|[:\-])(NIFTY|BANKNIFTY|FINNIFTY|MIDCPNIFTY|SENSEX|BANKEX)\b/.test(sym);
     if (isHolding) {
-      return (/FNO|NFO|BFO|MCX|CDS/.test(ex) || /\d+(?:CE|PE|FUT)$/.test(sym)) ? "fno" : "equity";
+      return (/FNO|NFO|BFO|MCX|CDS/.test(ex) || fnoSym) ? "fno" : "equity";
     }
     if (row.drv_option_type) return "fno";
     if (/FNO|NFO|BFO|MCX|CDS|DERIV/.test(ex) || ex === "11" || ex === "12" || ex === "20") return "fno";
     if (/(?:_EQ$|^EQ$|NSE_EQ|BSE_EQ)/.test(ex) || ex === "10" || /-EQ$|-BE$|-BL$/.test(sym)) return "equity";
-    if (/\b(CE|PE|CALL|PUT|FUT)\b/.test(sym) || /\d+(?:\.\d+)?-?(?:CE|PE|FUT)$/.test(sym) || /(?:^|[:\-])(NIFTY|BANKNIFTY|FINNIFTY|MIDCPNIFTY|SENSEX|BANKEX)\b/.test(sym)) return "fno";
-    return "equity";
+    return fnoSym ? "fno" : "equity";
   }
   function _tmApplySeg(rows, isHolding) {
     if (!rows || !rows.length || tmSeg === "all") return rows || [];
@@ -3432,6 +3436,11 @@
       else _tmSetTimer("⏸ off", "paused");
     });
     if ($("tmodeExitAll")) $("tmodeExitAll").addEventListener("click", async () => {
+      const cnt = tmData?.counts || {};
+      if ((cnt.open_positions || 0) === 0 && (cnt.pending_orders || 0) === 0) {
+        tmodeMsg("No open positions or pending orders right now.");
+        return;
+      }
       if (!confirm("Exit ALL open positions right now on your live broker account?")) return;
       try {
         const r = await fetch("/api/trademode/exit-position", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
@@ -3644,10 +3653,11 @@
       e.stopPropagation();
       toggleTmFloatWidget();
     });
-    if ($("tmSidePos")) $("tmSidePos").textContent = c.total_positions || 0;
-    if ($("tmSideOrd")) $("tmSideOrd").textContent = c.orders || 0;
-    if ($("tmSideTrd")) $("tmSideTrd").textContent = c.trades || 0;
-    if ($("tmSideHld")) $("tmSideHld").textContent = c.holdings || 0;
+    const totC = d.counts || {};
+    if ($("tmSidePos")) $("tmSidePos").textContent = totC.total_positions || 0;
+    if ($("tmSideOrd")) $("tmSideOrd").textContent = totC.orders || 0;
+    if ($("tmSideTrd")) $("tmSideTrd").textContent = totC.trades || 0;
+    if ($("tmSideHld")) $("tmSideHld").textContent = totC.holdings || 0;
     document.querySelectorAll("#navTrade [data-tmtab]").forEach((x) => x.classList.toggle("active", x.dataset.tmtab === tmTab));
     _tmSyncSegUi();
     renderTradeBody();
@@ -3712,9 +3722,11 @@
     const hldVal = useFilter ? hldList.reduce((s, h) => s + Number(h.value || 0), 0) : (f.holdings_value || 0);
     const hldPnl = useFilter ? hldList.reduce((s, h) => s + Number(h.pnl || 0), 0) : ((d.pnl || {}).holdings_pnl || 0);
     const segLabel = useFilter ? (tmSeg === "equity" ? " · Equity" : " · F&O") : "";
+    const cntStr = (shown, total) => (useFilter && shown !== total) ? `${shown} / ${total}` : `${shown}`;
+    const totPos = (d.positions || []).length, totOrd = (d.orders || []).length, totTrd = (d.trades || []).length, totHld = (d.holdings || []).length;
     if (tmTab === "overview") {
       body.innerHTML = `<div class="tmode-split">` +
-        `<div class="tmode-box"><div class="tmode-sec-h"><span>⚡ Open &amp; Today Positions${segLabel} (${posList.length})</span><button class="jbtn sm" type="button" data-jump-tmtab="positions">View all</button></div>${_tmPositionsTable(posList, ctrl, 260)}</div>` +
+        `<div class="tmode-box"><div class="tmode-sec-h"><span>⚡ Open &amp; Today Positions${segLabel} (${cntStr(posList.length, totPos)})</span><button class="jbtn sm" type="button" data-jump-tmtab="positions">View all</button></div>${_tmPositionsTable(posList, ctrl, 260)}</div>` +
         `<div class="tmode-box"><div class="tmode-sec-h"><span>💳 Funds &amp; Margin Breakdown</span><button class="jbtn sm" type="button" data-jump-tmtab="orders">Orders</button></div>` +
         `<div class="tm-grid" style="margin-top:4px">` +
         `<div class="tm-cell"><div class="k">Available Cash</div><div class="v pos">${inr(f.available || 0)}</div></div>` +
@@ -3724,24 +3736,24 @@
         `<div class="tm-cell"><div class="k">Holdings Value${segLabel}</div><div class="v">${inr(hldVal)}</div></div>` +
         `<div class="tm-cell"><div class="k">Holdings P&amp;L${segLabel}</div><div class="v ${hldPnl >= 0 ? "pos" : "neg"}">${signed(hldPnl)}</div></div>` +
         `</div></div></div>` +
-      `<div class="tmode-box" style="margin-top:12px"><div class="tmode-sec-h"><span>📋 Today Orders${segLabel} (${ordList.length})</span><button class="jbtn sm" type="button" data-jump-tmtab="trades">Today's Trades →</button></div>${_tmOrdersTable(ordList, ctrl, 260)}</div>`;
+      `<div class="tmode-box" style="margin-top:12px"><div class="tmode-sec-h"><span>📋 Today Orders${segLabel} (${cntStr(ordList.length, totOrd)})</span><button class="jbtn sm" type="button" data-jump-tmtab="trades">Today's Trades →</button></div>${_tmOrdersTable(ordList, ctrl, 260)}</div>`;
       return;
     }
     if (tmTab === "positions") {
-      body.innerHTML = `<div class="tmode-box"><div class="tmode-sec-h"><span>⚡ Positions${segLabel} (${posList.length})</span></div>${_tmPositionsTable(posList, ctrl, 520)}</div>`;
+      body.innerHTML = `<div class="tmode-box"><div class="tmode-sec-h"><span>⚡ Positions${segLabel} (${cntStr(posList.length, totPos)})</span></div>${_tmPositionsTable(posList, ctrl, 520)}</div>`;
       return;
     }
     if (tmTab === "orders") {
-      body.innerHTML = `<div class="tmode-box"><div class="tmode-sec-h"><span>📋 Orders Today${segLabel} (${ordList.length})</span></div>${_tmOrdersTable(ordList, ctrl, 520)}</div>`;
+      body.innerHTML = `<div class="tmode-box"><div class="tmode-sec-h"><span>📋 Orders Today${segLabel} (${cntStr(ordList.length, totOrd)})</span></div>${_tmOrdersTable(ordList, ctrl, 520)}</div>`;
       return;
     }
     if (tmTab === "trades") {
-      body.innerHTML = `<div class="tmode-box"><div class="tmode-sec-h"><span>✅ Executed Trades Today${segLabel} (${trdList.length})</span></div>${_tmTradesTable(trdList, 520)}</div>`;
+      body.innerHTML = `<div class="tmode-box"><div class="tmode-sec-h"><span>✅ Executed Trades Today${segLabel} (${cntStr(trdList.length, totTrd)})</span></div>${_tmTradesTable(trdList, 520)}</div>`;
       return;
     }
     if (tmTab === "holdings") {
       const rows = hldList;
-      body.innerHTML = `<div class="tmode-box"><div class="tmode-sec-h"><span>💼 Portfolio Holdings${segLabel} (${rows.length})</span></div>` + (rows.length
+      body.innerHTML = `<div class="tmode-box"><div class="tmode-sec-h"><span>💼 Portfolio Holdings${segLabel} (${cntStr(rows.length, totHld)})</span></div>` + (rows.length
         ? `<div class="table-scroll" style="max-height:520px"><table class="data"><thead><tr>
             <th style="text-align:left">Symbol</th><th>Qty</th><th>Avg Cost</th><th>LTP</th><th>Current Value</th><th>P&amp;L</th>
           </tr></thead><tbody>` + rows.map((h) =>
