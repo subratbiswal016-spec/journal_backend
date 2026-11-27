@@ -785,6 +785,20 @@ def api_ipos():
     return ipo.demo()
 
 
+@app.get("/api/ipo/detail")
+def api_ipo_detail(symbol: str = Query(""), name: str = Query("")):
+    """Company introduction, pre-IPO ratios, pros/cons & category bids for an IPO."""
+    if _source.name == "mock":
+        nm = (name or symbol or "Demo Company").strip()
+        return {
+            "ok": True, "symbol": symbol, "name": nm,
+            "about": f"{nm} is shown in Demo mode. Connect Fyers to fetch live Screener & NSE company details.",
+            "sector": "", "ratios": [], "pros": [], "cons": [], "bids": [],
+            "screener_url": "", "source": "Demo",
+        }
+    return ipo.detail(symbol=symbol, name=name)
+
+
 @app.get("/api/ipos_diag")
 def api_ipos_diag():
     """Un-gated diagnostic: does NSE's IPO API answer from this host?"""
