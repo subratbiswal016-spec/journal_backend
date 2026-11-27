@@ -6,12 +6,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Option OI Dashboard</title>
   <script>try { var t = localStorage.getItem('oi-theme') || 'sand'; if (t === 'light' || t === 'emerald' || t === 'sand') document.documentElement.classList.add(t); } catch (e) { document.documentElement.classList.add('sand'); }</script>
-  <link rel="stylesheet" href="style.css?v=71" />
+  <link rel="stylesheet" href="style.css?v=72" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
   <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"
     defer></script>
-  <script src="app.js?v=18" defer></script>
-  <script src="journal.js?v=80" defer></script>
+  <script src="app.js?v=19" defer></script>
+  <script src="journal.js?v=81" defer></script>
 </head>
 
 <body>
@@ -69,20 +69,6 @@
         <div id="stockSearchResults" class="hsearch-results hidden"></div>
       </div>
       <div class="topbar-right">
-        <div class="controls" id="oiControls">
-          <label>Index
-            <select id="symbol"></select>
-          </label>
-          <label>Expiry
-            <select id="expiry"></select>
-          </label>
-          <label class="switch">
-            <input type="checkbox" id="autoRefresh" checked />
-            <span>Auto</span>
-          </label>
-          <span id="oiCountdown" class="scr-countdown" title="Next auto-refresh">⏱ --</span>
-          <button id="refreshBtn" class="jbtn primary" title="Refresh now">⟳ Refresh</button>
-        </div>
         <div id="topbarTimer" class="tb-timer" title="IST clock &amp; NSE/BSE market session timer">
           <span class="tb-dot" id="tbTimerDot"></span>
           <span id="tbTimerClock">--:--:-- IST</span>
@@ -291,6 +277,27 @@
     </main>
 
     <main id="viewOI" class="hidden">
+      <section class="oi-toolbar controls" id="oiControls">
+        <div class="oi-tb-left">
+          <span class="oi-tb-title">📊 Option Chain &amp; OI</span>
+          <label class="oi-field">
+            <span class="oi-flab">Index</span>
+            <select id="symbol"></select>
+          </label>
+          <label class="oi-field">
+            <span class="oi-flab">Expiry</span>
+            <select id="expiry"></select>
+          </label>
+        </div>
+        <div class="oi-refresh-group" id="oiRefreshGroup">
+          <label id="oiAutoWrap" class="oi-rg-auto" title="Click to toggle auto-refresh">
+            <input type="checkbox" id="autoRefresh" checked />
+            <span>Auto</span>
+            <span id="oiCountdown" class="oi-rg-timer" title="Next auto-refresh">⏱ --</span>
+          </label>
+          <button id="refreshBtn" class="oi-rg-btn" type="button" title="Refresh now">⟳ Refresh</button>
+        </div>
+      </section>
       <section class="tiles" id="tiles"></section>
 
       <section class="charts">

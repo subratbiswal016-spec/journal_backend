@@ -91,8 +91,6 @@
     if ($("navTrade")) $("navTrade").classList.toggle("hidden", view !== "trademode");
     if ($("tradeModeBtn")) $("tradeModeBtn").classList.toggle("active", view === "trademode");
     if ($("tradeModeLbl")) $("tradeModeLbl").textContent = view === "trademode" ? "Exit Trade Mode" : "Trade Mode";
-    const oiCtl = $("oiControls");
-    if (oiCtl) oiCtl.style.display = view === "oi" ? "" : "none";
     if (view === "home") loadHome();
     if (view === "oi") requestAnimationFrame(() => {   // charts were sized while hidden → refit
       try {
@@ -3648,7 +3646,7 @@
       kcard(`Unrealized MTM${segTag}`, signed(p.unrealized || 0), (p.unrealized || 0) >= 0 ? "pos" : "neg", `${c.open_positions || 0} open positions`) +
       kcard("Available Funds", inr(f.available || 0), "pos", `utilized ${inr(f.utilized || 0)}`) +
       kcard("Total Balance", inr(f.total || 0), "", `opening ${inr(f.sod || 0)}`) +
-    kcard(`Today Activity${segTag}`, `${c.trades || 0} fills`, "", `${c.orders || 0} orders (${c.pending_orders || 0} pending)`);
+      kcard(`Today Activity${segTag}`, `${c.trades || 0} fills`, "", `${c.orders || 0} orders (${c.pending_orders || 0} pending)`);
     if ($("tmodeKpiFloatBtn")) $("tmodeKpiFloatBtn").addEventListener("click", (e) => {
       e.stopPropagation();
       toggleTmFloatWidget();
@@ -3736,7 +3734,7 @@
         `<div class="tm-cell"><div class="k">Holdings Value${segLabel}</div><div class="v">${inr(hldVal)}</div></div>` +
         `<div class="tm-cell"><div class="k">Holdings P&amp;L${segLabel}</div><div class="v ${hldPnl >= 0 ? "pos" : "neg"}">${signed(hldPnl)}</div></div>` +
         `</div></div></div>` +
-      `<div class="tmode-box" style="margin-top:12px"><div class="tmode-sec-h"><span>📋 Today Orders${segLabel} (${cntStr(ordList.length, totOrd)})</span><button class="jbtn sm" type="button" data-jump-tmtab="trades">Today's Trades →</button></div>${_tmOrdersTable(ordList, ctrl, 260)}</div>`;
+        `<div class="tmode-box" style="margin-top:12px"><div class="tmode-sec-h"><span>📋 Today Orders${segLabel} (${cntStr(ordList.length, totOrd)})</span><button class="jbtn sm" type="button" data-jump-tmtab="trades">Today's Trades →</button></div>${_tmOrdersTable(ordList, ctrl, 260)}</div>`;
       return;
     }
     if (tmTab === "positions") {

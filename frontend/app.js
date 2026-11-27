@@ -88,6 +88,8 @@ document.addEventListener("DOMContentLoaded", _updateTopbarTimer);
 function setCountdown(txt) {
   const el = $("oiCountdown");
   if (el) el.textContent = "⏱ " + txt;
+  const wrap = $("oiAutoWrap");
+  if (wrap) wrap.classList.toggle("off", txt === "off" || txt === "paused");
 }
 function countdownLabel() {
   if (!marketStatus().open) return "paused";
