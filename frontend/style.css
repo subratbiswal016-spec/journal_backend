@@ -280,6 +280,26 @@ body {
   letter-spacing: .5px;
 }
 
+.badge.neg {
+  background: rgba(239, 83, 80, .14);
+  border-color: rgba(239, 83, 80, .42);
+  color: var(--call);
+}
+
+.badge.pos {
+  background: rgba(38, 166, 154, .14);
+  border-color: rgba(38, 166, 154, .4);
+  color: var(--put);
+}
+
+#viewTradeMode .pos {
+  color: var(--put);
+}
+
+#viewTradeMode .neg {
+  color: var(--call);
+}
+
 .controls {
   display: flex;
   align-items: center;

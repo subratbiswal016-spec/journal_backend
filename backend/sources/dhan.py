@@ -290,7 +290,8 @@ class DhanDataSource(DataSource):
                 "can_place_order": True,
                 "can_killswitch": True,
                 "can_pnl_exit": True,
-                "kill_switch": str(ks.get("killSwitchStatus") or "DEACTIVATE").upper(),
+                "kill_switch": str(ks.get("killSwitchStatus") or "INACTIVE").upper(),
+                "kill_switch_active": str(ks.get("killSwitchStatus") or "").upper() in ("ACTIVE", "ACTIVATE", "ACTIVATED"),
                 "pnl_exit": pnl_ex,
             },
         }
